@@ -1,10 +1,14 @@
 // Rooms: land, building, pricing per room type and every room
 // (port of the web's components/game/RoomsTab.js).
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+// The room list is a virtualized SectionList grouped by room type (collapsed
+// by default), and each card is memoized on plain values: the engine hands
+// over new objects every tick, so a big hotel would otherwise redraw every
+// card every game day.
+import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, SectionList, StyleSheet, Text, View } from 'react-native';
 import { insights, type RoomType } from '../catalog';
 import type { ActionResult, GameState, Room } from '../types';
-import { Button, C, Card, Chips, Empty, Meter, Pill, Section, Stars, Stat, StatRow, TabHeader, s, usd } from './kit';
+import { Button, C, Card, Chips, Meter, Pill, Section, Stars, Stat, StatRow, TabHeader, s, usd } from './kit';
 
 type Guide = { market: number; sweet: number; ceiling: number } | null;
 
@@ -17,14 +21,16 @@ function priceZone(price: number, guide: Guide): { label: string; tone: string }
   return { label: 'Bargain', tone: 'sky' };
 }
 
-function Stepper({ value, onChange, step = 10 }: { value: number; onChange: (v: number) => void; step?: number }) {
+const HIT = { top: 8, bottom: 8, left: 6, right: 6 };
+
+function Stepper({ value, onChange, step = 10, label }: { value: number; onChange: (v: number) => void; step?: number; label: string }) {
   return (
     <View style={st.stepper}>
-      <Pressable onPress={() => onChange(Math.max(10, value - step))} style={st.stepBtn} accessibilityLabel="Lower price">
+      <Pressable onPress={() => onChange(Math.max(10, value - step))} style={st.stepBtn} hitSlop={HIT} accessibilityRole="button" accessibilityLabel={`Lower ${label} price`}>
         <Text style={st.stepText}>−</Text>
       </Pressable>
       <Text style={st.stepValue}>{usd(value)}</Text>
-      <Pressable onPress={() => onChange(value + step)} style={st.stepBtn} accessibilityLabel="Raise price">
+      <Pressable onPress={() => onChange(value + step)} style={st.stepBtn} hitSlop={HIT} accessibilityRole="button" accessibilityLabel={`Raise ${label} price`}>
         <Text style={st.stepText}>+</Text>
       </Pressable>
     </View>
@@ -46,7 +52,7 @@ function TypePricing({ type, rooms, guide, onApply }: { type: string; rooms: Roo
       <View style={s.between}>
         <View>
           <Text style={s.title}>
-            {type} <Text style={{ color: C.faint, fontWeight: '500' }}>× {rooms.length}</Text>
+            {type} <Text style={{ color: C.sub, fontWeight: '500' }}>× {rooms.length}</Text>
           </Text>
           <Text style={s.tiny}>
             {occupied}/{rooms.length} booked{guide ? ` · market ${usd(guide.market)}` : ''}
@@ -54,8 +60,8 @@ function TypePricing({ type, rooms, guide, onApply }: { type: string; rooms: Roo
         </View>
         {zone.label ? <Pill tone={zone.tone}>{zone.label}</Pill> : null}
       </View>
-      <View style={[s.between, { marginTop: 10 }]}>
-        <Stepper value={value} onChange={setDraft} step={5} />
+      <View style={[s.between, { marginTop: 10, flexWrap: 'wrap', gap: 8 }]}>
+        <Stepper value={value} onChange={setDraft} step={5} label={type} />
         {guide && (
           <Button variant="ghost" onPress={() => apply(guide.sweet)}>
             ✨ Best ({usd(guide.sweet)})
@@ -76,38 +82,51 @@ function TypePricing({ type, rooms, guide, onApply }: { type: string; rooms: Roo
   );
 }
 
-function RoomCard({ room, guest, money, guide, onUpgrade, onPrice }: { room: Room; guest: any; money: number; guide: Guide; onUpgrade: (id: number) => void; onPrice: (id: number, price: number) => void }) {
-  const cost: number | null = insights.upgradeCost(room);
-  const status = room.underMaintenance ? 'repair' : room.occupied ? 'busy' : 'free';
-  const zone = priceZone(room.price, guide);
+type CardProps = {
+  id: number;
+  type: string;
+  price: number;
+  quality: number;
+  status: 'busy' | 'repair' | 'free';
+  repairLeft: number;
+  guestLabel: string;
+  cost: number | null;
+  canUpgrade: boolean;
+  zoneLabel: string;
+  zoneTone: string;
+  onUpgrade: (id: number) => void;
+  onPrice: (id: number, price: number) => void;
+};
+
+const RoomCard = memo(function RoomCard(p: CardProps) {
   return (
-    <Card style={status === 'busy' ? { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' } : status === 'repair' ? { backgroundColor: C.amberSoft, borderColor: '#fde68a' } : null}>
+    <Card style={p.status === 'busy' ? { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' } : p.status === 'repair' ? { backgroundColor: C.amberSoft, borderColor: '#fde68a' } : null}>
       <View style={s.between}>
         <View>
-          <Text style={s.tiny}>#{room.id}</Text>
-          <Text style={s.title}>{room.type}</Text>
+          <Text style={s.tiny}>#{p.id}</Text>
+          <Text style={s.title}>{p.type}</Text>
         </View>
-        <Pill tone={status === 'busy' ? 'green' : status === 'repair' ? 'amber' : 'slate'}>
-          {status === 'busy' ? '🧑 Booked' : status === 'repair' ? `🔧 Repairs${room.repairLeft ? ` · ${room.repairLeft}d` : ''}` : 'Vacant'}
+        <Pill tone={p.status === 'busy' ? 'green' : p.status === 'repair' ? 'amber' : 'slate'}>
+          {p.status === 'busy' ? '🧑 Booked' : p.status === 'repair' ? `🔧 Repairs${p.repairLeft ? ` · ${p.repairLeft}d` : ''}` : 'Vacant'}
         </Pill>
       </View>
       <View style={[s.between, { marginTop: 6 }]}>
-        <Stars value={room.quality} />
+        <Stars value={p.quality} />
         <Text style={[s.tiny, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>
-          {guest ? `${guest.name} · ${guest.type}` : ''}
+          {p.guestLabel}
         </Text>
       </View>
       <View style={[s.between, { marginTop: 10 }]}>
-        <Stepper value={room.price} onChange={(p) => onPrice(room.id, p)} />
-        {zone.label ? <Pill tone={zone.tone}>{zone.label}</Pill> : null}
+        <Stepper value={p.price} onChange={(v) => p.onPrice(p.id, v)} label={`room ${p.id}`} />
+        {p.zoneLabel ? <Pill tone={p.zoneTone}>{p.zoneLabel}</Pill> : null}
       </View>
-      {room.quality > 3 && room.occupied && <Text style={[s.tiny, { marginTop: 4 }]}>Wearing down while occupied</Text>}
-      <Button variant="dark" style={{ marginTop: 8 }} disabled={cost == null || money < cost} onPress={() => onUpgrade(room.id)}>
-        {cost == null ? 'Max quality' : `⬆ Upgrade · ${usd(cost)}`}
+      {p.quality > 3 && p.status === 'busy' && <Text style={[s.tiny, { marginTop: 4 }]}>Wearing down while occupied</Text>}
+      <Button variant="dark" style={{ marginTop: 8 }} disabled={!p.canUpgrade} onPress={() => p.onUpgrade(p.id)}>
+        {p.cost == null ? 'Max quality' : `⬆ Upgrade · ${usd(p.cost)}`}
       </Button>
     </Card>
   );
-}
+});
 
 const FILTERS = [
   { id: 'all' as const, label: 'All' },
@@ -115,6 +134,7 @@ const FILTERS = [
   { id: 'free' as const, label: 'Vacant' },
   { id: 'repair' as const, label: 'Repairs' },
 ];
+const statusOf = (r: Room) => (r.underMaintenance ? 'repair' : r.occupied ? 'busy' : 'free');
 
 export default function RoomsTab({
   game,
@@ -122,19 +142,32 @@ export default function RoomsTab({
   buildRoom,
   upgradeRoom,
   adjustRoomPrice,
+  setPrices,
   buyPlot,
+  top,
 }: {
   game: GameState;
   roomTypes: RoomType[];
   buildRoom: (type: string) => ActionResult;
   upgradeRoom: (id: number) => void;
   adjustRoomPrice: (id: number, price: number) => void;
+  /** Several room prices as one update (copies the state once). */
+  setPrices: (changes: { roomId: number; price: number }[]) => void;
   buyPlot: () => void;
+  /** Banners shown above the tab (debt, guide). */
+  top?: React.ReactNode;
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['id']>('all');
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [justBuilt, setJustBuilt] = useState<string | null>(null);
   const rooms = game.rooms;
   const money = game.money;
+
+  // Stable callbacks so memoized cards don't redraw when the parent does.
+  const actions = useRef({ upgradeRoom, adjustRoomPrice });
+  actions.current = { upgradeRoom, adjustRoomPrice };
+  const onUpgrade = useCallback((id: number) => actions.current.upgradeRoom(id), []);
+  const onPrice = useCallback((id: number, price: number) => actions.current.adjustRoomPrice(id, price), []);
 
   const guestsById = useMemo(() => new Map((game.guests || []).map((g) => [g.id, g])), [game.guests]);
   const guides = useMemo(() => {
@@ -155,12 +188,18 @@ export default function RoomsTab({
   const booked = usable.filter((r) => r.occupied);
   const nightly = booked.reduce((t, r) => t + r.price, 0);
   const avgPrice = rooms.length ? rooms.reduce((t, r) => t + r.price, 0) / rooms.length : 0;
-  const shown = rooms.filter((r) => filter === 'all' || (r.underMaintenance ? 'repair' : r.occupied ? 'busy' : 'free') === filter);
-
   const cap: number = insights.roomCapacity(game);
   const full = rooms.length >= cap;
   const plotPrice: number = insights.nextPlotPrice(game);
   const plots: number = insights.plotsOwned(game);
+  // Small hotels show their rooms; big ones start collapsed.
+  const defaultOpen = rooms.length <= 12;
+
+  const sections = byType.map(([type, list]) => {
+    const shown = list.filter((r) => filter === 'all' || statusOf(r) === filter);
+    const isOpen = open[type] ?? defaultOpen;
+    return { type, total: list.length, matches: shown.length, isOpen, data: isOpen ? shown : [] };
+  });
 
   const build = (type: string) => {
     if (buildRoom(type).ok) {
@@ -168,13 +207,12 @@ export default function RoomsTab({
       setTimeout(() => setJustBuilt(null), 1500);
     }
   };
-  // One action per room whose price actually changes.
-  const setTypePrice = (type: string, price: number) => {
-    for (const r of rooms) if (r.type === type && r.price !== price) adjustRoomPrice(r.id, price);
-  };
+  const setTypePrice = (type: string, price: number) =>
+    setPrices(rooms.filter((r) => r.type === type && r.price !== price).map((r) => ({ roomId: r.id, price })));
 
-  return (
+  const header = (
     <View>
+      {top}
       <TabHeader icon="🛏️" title="Rooms" />
       <StatRow>
         <Stat label="Rooms" value={rooms.length} sub={`${rooms.length - usable.length} in repair`} />
@@ -250,31 +288,72 @@ export default function RoomsTab({
         </Section>
       )}
 
-      <Section title="All rooms" action={<Chips options={FILTERS} value={filter} onChange={setFilter} />}>
-        {shown.length === 0 ? (
-          <Empty>No rooms match this filter.</Empty>
-        ) : (
-          shown.map((room) => (
-            <RoomCard
-              key={room.id}
-              room={room}
-              guest={room.guest != null ? guestsById.get(room.guest) : null}
-              money={money}
-              guide={guides[room.type]}
-              onUpgrade={upgradeRoom}
-              onPrice={adjustRoomPrice}
-            />
-          ))
-        )}
-      </Section>
+      <View style={[s.sectionHead, { marginBottom: 8 }]}>
+        <Text style={s.sectionTitle}>All rooms</Text>
+        <Chips options={FILTERS} value={filter} onChange={setFilter} />
+      </View>
     </View>
+  );
+
+  return (
+    <SectionList
+      sections={sections}
+      keyExtractor={(r) => String(r.id)}
+      ListHeaderComponent={header}
+      contentContainerStyle={st.list}
+      stickySectionHeadersEnabled={false}
+      initialNumToRender={8}
+      windowSize={7}
+      removeClippedSubviews
+      keyboardShouldPersistTaps="handled"
+      renderSectionHeader={({ section }) => (
+        <Pressable
+          onPress={() => setOpen((o) => ({ ...o, [section.type]: !section.isOpen }))}
+          style={st.group}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: section.isOpen }}
+          accessibilityLabel={`${section.type} rooms, ${section.matches} shown`}
+        >
+          <Text style={s.title}>
+            {section.isOpen ? '▾' : '▸'} {section.type}
+          </Text>
+          <Text style={s.small}>
+            {filter === 'all' ? section.total : `${section.matches} of ${section.total}`} room{section.total === 1 ? '' : 's'}
+          </Text>
+        </Pressable>
+      )}
+      renderItem={({ item: r }) => {
+        const cost: number | null = insights.upgradeCost(r);
+        const guest = r.guest != null ? guestsById.get(r.guest) : null;
+        const zone = priceZone(r.price, guides[r.type]);
+        return (
+          <RoomCard
+            id={r.id}
+            type={r.type}
+            price={r.price}
+            quality={r.quality}
+            status={statusOf(r)}
+            repairLeft={r.repairLeft || 0}
+            guestLabel={guest ? `${guest.name} · ${guest.type}` : ''}
+            cost={cost}
+            canUpgrade={cost != null && money >= cost}
+            zoneLabel={zone.label}
+            zoneTone={zone.tone}
+            onUpgrade={onUpgrade}
+            onPrice={onPrice}
+          />
+        );
+      }}
+    />
   );
 }
 
 const st = StyleSheet.create({
+  list: { padding: 12, paddingBottom: 24 },
   stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: C.line, borderRadius: 10 },
-  stepBtn: { paddingHorizontal: 12, paddingVertical: 6 },
-  stepText: { fontSize: 18, color: C.sub, fontWeight: '600' },
+  stepBtn: { minWidth: 44, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+  stepText: { fontSize: 20, color: '#475569', fontWeight: '600' },
   stepValue: { minWidth: 60, textAlign: 'center', fontSize: 14, fontWeight: '700', fontVariant: ['tabular-nums'], color: C.text },
   buildCard: { width: 220, backgroundColor: C.card, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: C.line },
+  group: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, minHeight: 44, marginBottom: 8 },
 });

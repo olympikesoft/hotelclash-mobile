@@ -104,7 +104,7 @@ export default function MarketingTab({
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={s.title}>{p.name}</Text>
                   <Text style={s.small}>
-                    {p.perk} · <Text style={{ color: C.faint }}>{costLabel(engineData.POLICY_COSTS[key])}</Text>
+                    {p.perk} · <Text style={{ color: C.sub }}>{costLabel(engineData.POLICY_COSTS[key])}</Text>
                     {now > 0 ? <Text style={{ fontWeight: '600', color: '#475569' }}> (now {usd(now)}/day)</Text> : null}
                   </Text>
                 </View>

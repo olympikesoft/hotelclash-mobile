@@ -1,7 +1,7 @@
 // Pop-ups: new hotel, bankruptcy, level up, random event, welcome back
 // (ports of the web's NewGameModal, GameOverModal, LevelUpModal, RandomEventModal)
 // and the toasts that answer "did my tap work?".
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { GameState } from '../types';
 import { Button, C, s, usd } from './kit';
@@ -136,7 +136,7 @@ export function LevelUpModal({
             {levelUp.unlocks.map((u) => (
               <Pressable key={u} onPress={() => onGo(tabFor(u))} style={[s.between, st.unlock]}>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: '#1e293b' }}>🔓 {u}</Text>
-                <Text style={{ color: C.faint }}>→</Text>
+                <Text style={{ color: C.sub }}>→</Text>
               </Pressable>
             ))}
           </>
@@ -184,6 +184,37 @@ const awayText = (ms: number) => {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ''}`.trim() : `${m} min`;
 };
 
+/** First launch: name the hotel (or sign in to continue one) before the clock starts. */
+export function WelcomeModal({ open, defaultName, onStart, onSignIn }: { open: boolean; defaultName?: string; onStart: (name: string) => Promise<void>; onSignIn: () => void }) {
+  const [name, setName] = useState(defaultName || '');
+  const [busy, setBusy] = useState(false);
+  const start = async () => {
+    setBusy(true);
+    try {
+      await onStart(name.trim() || 'My Hotel');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Sheet visible={open}>
+      <Header bg={C.indigo} kicker="🏨 WELCOME" title="Your hotel empire starts here" text="$100,000, a few rooms and one receptionist. Price smart, keep guests happy, grow to level 5." />
+      <View style={st.body}>
+        <Text style={st.label}>NAME YOUR HOTEL</Text>
+        <TextInput value={name} onChangeText={setName} placeholder="e.g. Sunset Palace" placeholderTextColor={C.faint} maxLength={80} style={st.input} returnKeyType="go" onSubmitEditing={start} accessibilityLabel="Hotel name" />
+        <Button big onPress={start} busy={busy} style={{ marginTop: 14 }}>
+          Open my hotel
+        </Button>
+        <Pressable onPress={onSignIn} style={{ marginTop: 12, alignItems: 'center', minHeight: 44, justifyContent: 'center' }} accessibilityRole="button">
+          <Text style={{ fontSize: 13, fontWeight: '600', color: C.indigo }}>I already have a hotel — sign in</Text>
+        </Pressable>
+      </View>
+    </Sheet>
+  );
+}
+
+const AD_WAIT_MS = 8000;
+
 /** Away earnings (engine CLAIM_AWAY_EARNINGS): collect, or watch an ad for 2×. */
 export function AwayModal({
   away,
@@ -198,13 +229,21 @@ export function AwayModal({
   onCollect: () => void;
   onDouble: () => void;
 }) {
+  // Give the ad a few seconds to load, then say so instead of a button that never wakes up.
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => {
+    setGaveUp(false);
+    if (!away || adReady) return undefined;
+    const t = setTimeout(() => setGaveUp(true), AD_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [away, adReady]);
   if (!away) return null;
   return (
     <Sheet visible onClose={onCollect}>
       <Header bg="#047857" kicker="👋 WELCOME BACK" title={`Your hotel earned ${usd(away.amount)}`} text={`While you were away (${awayText(away.ms)}), guests kept checking in.`} />
       <View style={st.body}>
-        <Button big variant="green" onPress={onDouble} disabled={!adReady} busy={busy}>
-          {adReady ? `▶ Watch ad · collect ${usd(away.amount * 2)}` : 'Ad loading…'}
+        <Button big variant="green" onPress={onDouble} disabled={!adReady} busy={busy || (!adReady && !gaveUp)}>
+          {adReady ? `▶ Watch ad · collect ${usd(away.amount * 2)}` : 'Ad unavailable right now'}
         </Button>
         <Button big variant="ghost" onPress={onCollect} disabled={busy} style={{ marginTop: 8 }}>
           Collect {usd(away.amount)}
@@ -268,7 +307,8 @@ const st = StyleSheet.create({
   bonus: { alignSelf: 'center', marginTop: -14, backgroundColor: '#fbbf24', color: '#0f172a', fontWeight: '800', fontSize: 14, paddingHorizontal: 14, paddingVertical: 5, borderRadius: 999, overflow: 'hidden' },
   unlock: { backgroundColor: '#f8fafc', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 6, borderWidth: 1, borderColor: C.line },
   nextGoal: { marginTop: 10, backgroundColor: C.indigoSoft, color: '#312e81', borderRadius: 12, padding: 10, fontSize: 13 },
-  toasts: { position: 'absolute', left: 16, right: 16, bottom: 16, alignItems: 'center', gap: 8 },
+  // Positioned in the content area (GameScreen), so this is above the banner and tab bar.
+  toasts: { position: 'absolute', left: 16, right: 16, bottom: 12, alignItems: 'center', gap: 8 },
   toast: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 420, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
   toastText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });

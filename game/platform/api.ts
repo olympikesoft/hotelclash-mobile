@@ -100,11 +100,27 @@ export function apiError(err: any, fallback: string) {
   return (data && (data.message || data.error || data.errors?.[0]?.msg)) || fallback;
 }
 
+export type LoginResult = { token: string; user: User };
+
 export const authAPI = {
   login: async (email: string, password: string) => {
     const { data } = await api.post('/api/auth/login', { email: email.trim(), password });
     storeSession(data);
     return data.user as User;
+  },
+  /** Check the credentials without signing in yet (the caller confirms, then calls finishLogin). */
+  checkLogin: async (email: string, password: string) => (await api.post('/api/auth/login', { email: email.trim(), password })).data as LoginResult,
+  finishLogin: (data: LoginResult) => storeSession(data),
+  /** The account's server hotel, if any, using a token that isn't stored yet. */
+  accountHotel: async (token: string) => {
+    try {
+      const { data } = await api.get('/api/game/session', { headers: { Authorization: `Bearer ${token}` } });
+      const st = data.session && data.session.state;
+      return st ? { hotelName: st.hotelName as string, day: st.day as number, money: st.money as number } : null;
+    } catch (error: any) {
+      if (error.response?.status === 404) return null;
+      throw error;
+    }
   },
   register: async (body: { email: string; password: string; username?: string; hotelName?: string; inviteCode?: string }) => {
     const { data } = await api.post('/api/auth/register', body);

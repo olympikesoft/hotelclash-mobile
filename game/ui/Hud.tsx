@@ -2,6 +2,7 @@
 // (port of the web's components/game/GameHud.js).
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { insights } from '../catalog';
 import type { GameState } from '../types';
 import type { SyncInfo } from '../useHotelGame';
@@ -32,14 +33,14 @@ function DayClock({ day, ms, running }: { day: number; ms: number; running: bool
   useEffect(() => {
     progress.setValue(0);
     if (!running) return undefined;
-    const anim = Animated.timing(progress, { toValue: 1, duration: ms, easing: Easing.linear, useNativeDriver: false });
+    // scaleX on the native driver: runs on the UI thread, not competing with game ticks.
+    const anim = Animated.timing(progress, { toValue: 1, duration: ms, easing: Easing.linear, useNativeDriver: true });
     anim.start();
     return () => anim.stop();
   }, [day, ms, running, progress]);
-  const width = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   return (
     <View style={st.clockTrack}>
-      <Animated.View style={[st.clockFill, { width }]} />
+      <Animated.View style={[st.clockFill, { transform: [{ scaleX: progress }] }]} />
     </View>
   );
 }
@@ -61,9 +62,9 @@ function Resource({ icon, label, value, color, footer, badge }: { icon: string; 
 export type MenuItem = { icon: string; label: string; onPress: () => void };
 
 const SPEEDS = [
-  { speed: 0, label: '⏸' },
-  { speed: 1, label: '▶' },
-  { speed: 2, label: '⏩' },
+  { speed: 0, icon: 'pause' as const, label: 'Pause' },
+  { speed: 1, icon: 'play' as const, label: 'Play' },
+  { speed: 2, icon: 'play-forward' as const, label: 'Fast' },
 ];
 
 export default function Hud({
@@ -99,7 +100,7 @@ export default function Hud({
           </View>
           <View style={{ flex: 1 }}>
             <Text style={st.hotelName} numberOfLines={1}>
-              {game.hotelName || 'My Hotel'}
+              {game.hotelName || 'My Hotel'} <Text style={st.rating}>★ {rep.toFixed(1)}</Text>
             </Text>
             <View style={st.levelRow}>
               <View style={st.levelTrack}>
@@ -115,15 +116,18 @@ export default function Hud({
             <Pressable
               key={sp.speed}
               onPress={() => onSpeed(sp.speed)}
+              hitSlop={{ top: 6, bottom: 6 }}
               style={[st.speedBtn, speed === sp.speed && { backgroundColor: sp.speed === 0 ? '#f43f5e' : '#10b981' }]}
-              accessibilityLabel={['Pause', 'Play', 'Fast'][sp.speed]}
+              accessibilityRole="button"
+              accessibilityLabel={sp.label}
+              accessibilityState={{ selected: speed === sp.speed }}
             >
-              <Text style={st.speedText}>{sp.label}</Text>
+              <Ionicons name={sp.icon} size={18} color="#fff" />
             </Pressable>
           ))}
         </View>
-        <Pressable onPress={() => setMenuOpen(true)} style={st.menuBtn} accessibilityLabel="Game menu">
-          <Text style={st.menuDots}>⋯</Text>
+        <Pressable onPress={() => setMenuOpen(true)} style={st.menuBtn} hitSlop={6} accessibilityRole="button" accessibilityLabel="Game menu">
+          <Ionicons name="ellipsis-horizontal" size={20} color="#cbd5e1" />
         </Pressable>
       </View>
 
@@ -158,7 +162,6 @@ export default function Hud({
           color="#7dd3fc"
           footer={<DayClock day={game.day} ms={dayMs} running={speed > 0} />}
         />
-        <Resource icon="⭐" label="Rating" value={`${rep.toFixed(1)}/5`} color="#fcd34d" />
         <Resource icon="📊" label="Market" value={`${Number(game.marketShare || 0).toFixed(1)}%`} color="#a5b4fc" />
         {sync.mode === 'account' && (
           <Resource
@@ -206,10 +209,8 @@ const st = StyleSheet.create({
   levelFill: { height: '100%', backgroundColor: '#fcd34d', borderRadius: 3 },
   levelNext: { color: '#94a3b8', fontSize: 10 },
   speeds: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 2 },
-  speedBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },
-  speedText: { color: '#fff', fontSize: 13 },
-  menuBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  menuDots: { color: '#cbd5e1', fontSize: 20, lineHeight: 22 },
+  speedBtn: { minWidth: 40, minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  menuBtn: { minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   resources: { gap: 8, paddingHorizontal: 12, paddingTop: 8 },
   resource: {
     flexDirection: 'row',
@@ -229,9 +230,10 @@ const st = StyleSheet.create({
   plus: { color: '#f5d0fe', backgroundColor: 'rgba(217,70,239,0.3)', fontSize: 11, fontWeight: '800', paddingHorizontal: 5, borderRadius: 4, overflow: 'hidden' },
   delta: { position: 'absolute', top: 2, right: 4, color: '#fff', fontSize: 10, fontWeight: '700', paddingHorizontal: 4, borderRadius: 4, overflow: 'hidden' },
   clockTrack: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.1)' },
-  clockFill: { height: '100%', backgroundColor: '#38bdf8' },
+  clockFill: { height: '100%', width: '100%', backgroundColor: '#38bdf8', transformOrigin: 'left' },
+  rating: { color: '#fcd34d', fontSize: 13, fontWeight: '700' },
   backdrop: { flex: 1, backgroundColor: 'rgba(2,6,23,0.4)', alignItems: 'flex-end', paddingTop: 90, paddingRight: 12 },
   menu: { width: 220, backgroundColor: '#0f172a', borderRadius: 14, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  menuItem: { paddingHorizontal: 14, paddingVertical: 12 },
+  menuItem: { paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, justifyContent: 'center' },
   menuText: { color: '#e2e8f0', fontSize: 14 },
 });

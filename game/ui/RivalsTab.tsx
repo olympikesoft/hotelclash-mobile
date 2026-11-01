@@ -61,7 +61,7 @@ export default function RivalsTab({ game, visitedToday, onVisit, onAcquire }: { 
             <Text style={s.tiny}>CUSTOMERS TONIGHT</Text>
             <Text style={{ fontSize: 22, fontWeight: '800', color: C.text, marginTop: 2 }}>
               {share.customers.toLocaleString('en-US')}
-              <Text style={{ fontSize: 13, fontWeight: '600', color: C.faint }}> of {share.town.toLocaleString('en-US')} in town</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: C.sub }}> of {share.town.toLocaleString('en-US')} in town</Text>
             </Text>
             <Text style={[s.small, { marginTop: 4 }]}>
               {share.stays} overnight guests + {share.visits} facility visits (a visit counts as half a night). That's a {share.base}% base share before the factors below.

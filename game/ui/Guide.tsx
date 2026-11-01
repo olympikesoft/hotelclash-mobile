@@ -10,12 +10,34 @@ import { Button, C, s } from './kit';
 
 const KEY = 'hotelClash.onboarding';
 type Saved = { done: string[]; hidden: boolean };
-type Step = { id: string; title: string; how: string; tab: string; done: (S: GameState) => boolean };
+export type Step = { id: string; title: string; how: string; tab: string; done: (S: GameState) => boolean };
 const STEPS = ONBOARDING_STEPS as Step[];
 
 export const resetOnboarding = () => storage.removeItem(KEY);
 
-export function GettingStarted({ game, onNavigate }: { game: GameState; onNavigate: (tab: string) => void }) {
+/** The step's hint at the top of the tab "Show me" opened; disappears once done. */
+export function CoachHint({ step, game, onDone }: { step: Step; game: GameState; onDone: () => void }) {
+  const done = step.done(game);
+  useEffect(() => {
+    if (!done) return undefined;
+    const t = setTimeout(onDone, 2500);
+    return () => clearTimeout(t);
+  }, [done]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <View style={[st.coach, done && { backgroundColor: C.greenSoft, borderColor: '#6ee7b7' }]} accessibilityLiveRegion="polite">
+      <View style={{ flex: 1 }}>
+        <Text style={st.kicker}>{done ? '✅ DONE' : '👉 GETTING STARTED'}</Text>
+        <Text style={{ fontSize: 14, fontWeight: '800', color: C.text, marginTop: 2 }}>{step.title}</Text>
+        {!done && <Text style={[s.small, { marginTop: 2 }]}>{step.how}</Text>}
+      </View>
+      <Pressable onPress={onDone} hitSlop={12} accessibilityRole="button" accessibilityLabel="Hide hint">
+        <Text style={{ color: C.sub, fontSize: 16 }}>✕</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+export function GettingStarted({ game, onNavigate }: { game: GameState; onNavigate: (tab: string, step: Step) => void }) {
   const [saved, setSaved] = useState<Saved>(() => readJson<Saved>(KEY, { done: [], hidden: false }));
   const [open, setOpen] = useState(false);
 
@@ -57,13 +79,13 @@ export function GettingStarted({ game, onNavigate }: { game: GameState; onNaviga
           🧭 GETTING STARTED · STEP {count + 1} OF {STEPS.length}
         </Text>
         <Pressable onPress={hide} hitSlop={10} accessibilityLabel="Hide guide">
-          <Text style={{ color: C.faint, fontSize: 16 }}>✕</Text>
+          <Text style={{ color: C.sub, fontSize: 16 }}>✕</Text>
         </Pressable>
       </View>
       <Text style={{ fontSize: 16, fontWeight: '800', color: C.text, marginTop: 2 }}>{current.title}</Text>
       <Text style={[s.small, { marginTop: 2 }]}>{current.how}</Text>
       <View style={[s.row, { gap: 12, marginTop: 8 }]}>
-        <Button onPress={() => onNavigate(current.tab)}>Show me →</Button>
+        <Button onPress={() => onNavigate(current.tab, current)}>Show me →</Button>
         <Pressable onPress={() => setOpen((v) => !v)}>
           <Text style={{ fontSize: 12, fontWeight: '600', color: C.indigo }}>All steps {open ? '▲' : '▼'}</Text>
         </Pressable>
@@ -75,7 +97,7 @@ export function GettingStarted({ game, onNavigate }: { game: GameState; onNaviga
         STEPS.map((step) => {
           const ok = done.has(step.id);
           return (
-            <Pressable key={step.id} onPress={() => onNavigate(step.tab)} style={{ paddingVertical: 5 }}>
+            <Pressable key={step.id} onPress={() => onNavigate(step.tab, step)} style={{ paddingVertical: 8 }} accessibilityRole="button">
               <Text style={{ fontSize: 13, color: ok ? C.faint : step === current ? C.text : '#334155', fontWeight: step === current ? '700' : '400', textDecorationLine: ok ? 'line-through' : 'none' }}>
                 {ok ? '✅' : '⚪'} {step.title}
               </Text>
@@ -182,6 +204,7 @@ export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => voi
 
 const st = StyleSheet.create({
   box: { backgroundColor: '#fff', borderRadius: 16, padding: 12, borderWidth: 2, borderColor: '#c7d2fe', marginBottom: 12 },
+  coach: { flexDirection: 'row', gap: 10, backgroundColor: C.indigoSoft, borderRadius: 14, padding: 12, borderWidth: 2, borderColor: '#a5b4fc', marginBottom: 12 },
   kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 0.8, color: '#6366f1', flex: 1 },
   track: { height: 5, borderRadius: 3, backgroundColor: '#e0e7ff', overflow: 'hidden', marginTop: 10 },
   fill: { height: '100%', backgroundColor: '#6366f1' },

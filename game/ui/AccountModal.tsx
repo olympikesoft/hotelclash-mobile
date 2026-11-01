@@ -3,10 +3,10 @@
 // After sign-in the GameStore attaches this phone's hotel to the account
 // (adopted if it's a new guest game, otherwise the account's server hotel wins).
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { apiError, authAPI, PRIVACY_URL, TERMS_URL } from '../platform/api';
 import { track } from '../../services/analytics';
-import { Button, C, s } from './kit';
+import { Button, C, s, usd } from './kit';
 
 type Mode = 'login' | 'register' | 'forgot';
 
@@ -20,7 +20,39 @@ function Field(props: React.ComponentProps<typeof TextInput> & { label: string }
   );
 }
 
-export default function AccountModal({ open, initialMode = 'register', reason, hotelName, onClose, onSignedIn }: { open: boolean; initialMode?: Mode; reason?: string; hotelName?: string; onClose: () => void; onSignedIn: () => void }) {
+type HotelSummary = { hotelName: string; day: number; money: number };
+
+const confirmReplace = (mine: HotelSummary, theirs: HotelSummary) =>
+  new Promise<boolean>((resolve) =>
+    Alert.alert(
+      'Replace this phone’s hotel?',
+      `Your account already has a hotel:\n${theirs.hotelName} · day ${theirs.day} · ${usd(theirs.money)}\n\nSigning in replaces the guest hotel on this phone:\n${mine.hotelName} · day ${mine.day} · ${usd(mine.money)}\n\nTip: cancel and choose "Save my hotel" to keep this one under a new account instead.`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Use account hotel', style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    )
+  );
+
+export default function AccountModal({
+  open,
+  initialMode = 'register',
+  reason,
+  hotelName,
+  guestHotel,
+  onClose,
+  onSignedIn,
+}: {
+  open: boolean;
+  initialMode?: Mode;
+  reason?: string;
+  hotelName?: string;
+  /** This phone's guest hotel, if the player is a guest (to warn before it's replaced). */
+  guestHotel?: HotelSummary | null;
+  onClose: () => void;
+  onSignedIn: () => void;
+}) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,8 +82,13 @@ export default function AccountModal({ open, initialMode = 'register', reason, h
         track('password_reset_requested');
         return;
       }
-      if (mode === 'login') await authAPI.login(email, password);
-      else await authAPI.register({ email: email.trim(), password, username: username.trim() || undefined, hotelName, inviteCode: inviteCode.trim() || undefined });
+      if (mode === 'login') {
+        const login = await authAPI.checkLogin(email, password);
+        // The account's server hotel replaces this phone's guest hotel: ask first if the guest one has real progress.
+        const theirs = guestHotel && guestHotel.day > 3 ? await authAPI.accountHotel(login.token) : null;
+        if (theirs && !(await confirmReplace(guestHotel!, theirs))) return;
+        authAPI.finishLogin(login);
+      } else await authAPI.register({ email: email.trim(), password, username: username.trim() || undefined, hotelName, inviteCode: inviteCode.trim() || undefined });
       track(mode === 'login' ? 'login' : 'sign_up', { method: 'email' });
       setPassword('');
       onSignedIn();

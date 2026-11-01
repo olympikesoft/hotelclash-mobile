@@ -195,6 +195,21 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
     [refreshSync, runSync]
   );
 
+  /** Several actions as one update: the state is copied once (e.g. "set all prices"). */
+  const dispatchMany = useCallback(
+    (actions: { type: string; [key: string]: any }[]): ActionResult[] => {
+      const s = getStore();
+      if (!s.state || !actions.length) return [];
+      const results: ActionResult[] = s.dispatchMany(actions);
+      const effects = results.flatMap((r) => r.effects || []);
+      if (effects.length && effectsRef.current) effectsRef.current(effects, s.state);
+      if (s.pendingCount >= SYNC_WHEN_PENDING) runSync();
+      else refreshSync();
+      return results;
+    },
+    [refreshSync, runSync]
+  );
+
   const newGame = useCallback(
     async (opts: { hotelName?: string; hotelType?: string }) => {
       await getStore().newGame(opts);
@@ -227,5 +242,5 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
     return getStore().pendingCount === 0;
   }, [runSync]);
 
-  return { state, dispatch, sync, newGame, restoreSave, loadLocalSnapshot, flush, user };
+  return { state, dispatch, dispatchMany, sync, newGame, restoreSave, loadLocalSnapshot, flush, user };
 }

@@ -16,6 +16,7 @@ import AccountModal, { ManageAccountModal } from './ui/AccountModal';
 import DebtBanner from './ui/DebtBanner';
 import Confetti from './ui/Confetti';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import SavesModal from './ui/SavesModal';
 import { isRewardedAdReady, preloadRewardedAd, showRewardedAd } from './platform/rewardedAd';
 import { maybeShowInterstitial, preloadInterstitial } from './platform/interstitialAd';
@@ -36,23 +37,24 @@ import RivalsTab from './ui/RivalsTab';
 import RankingTab from './ui/RankingTab';
 import RewardsTab from './ui/RewardsTab';
 import ActivityFeed, { type Note } from './ui/ActivityFeed';
-import { GettingStarted, HowToPlay, resetOnboarding } from './ui/Guide';
-import { AwayModal, EventModal, GameOverModal, LevelUpModal, NewGameModal, Toasts, explainRejection, type Toast } from './ui/Modals';
+import { CoachHint, GettingStarted, HowToPlay, resetOnboarding, type Step } from './ui/Guide';
+import { AwayModal, EventModal, GameOverModal, LevelUpModal, NewGameModal, Toasts, WelcomeModal, explainRejection, type Toast } from './ui/Modals';
 import { C, s } from './ui/kit';
 
 const BANNER_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-7819420241195884/9518012960';
 const DAY_MS: Record<number, number> = { 1: 3000, 2: 1500 }; // same pacing as the web game
 
-const TABS: { id: Tab; icon: string; label: string }[] = [
-  { id: 'dashboard', icon: '🏠', label: 'Hotel' },
-  { id: 'rooms', icon: '🛏️', label: 'Rooms' },
-  { id: 'staff', icon: '👥', label: 'Staff' },
-  { id: 'facilities', icon: '✨', label: 'Facilities' },
-  { id: 'more', icon: '☰', label: 'More' },
+const TABS: { id: Tab; icon: React.ComponentProps<typeof Ionicons>['name']; label: string }[] = [
+  { id: 'dashboard', icon: 'home', label: 'Hotel' },
+  { id: 'rooms', icon: 'bed', label: 'Rooms' },
+  { id: 'staff', icon: 'people', label: 'Staff' },
+  { id: 'marketing', icon: 'megaphone', label: 'Marketing' },
+  { id: 'more', icon: 'grid', label: 'More' },
 ];
-// Behind "More" (a phone bar fits five tabs).
+// Behind "More" (a phone bar fits five tabs). Marketing is in the bar: advice
+// sends players there early; facilities only unlock at level 3.
 const MORE_TABS: { id: Tab; icon: string; label: string; sub: string }[] = [
-  { id: 'marketing', icon: '📣', label: 'Marketing', sub: 'Campaigns & policies' },
+  { id: 'facilities', icon: '✨', label: 'Facilities', sub: 'Extra guest spending' },
   { id: 'finance', icon: '💵', label: 'Finance', sub: 'Statement & insurance' },
   { id: 'guests', icon: '🧳', label: 'Guests', sub: 'Moods & reviews' },
   { id: 'rivals', icon: '🏢', label: 'Rivals', sub: 'Market, visits, buyouts' },
@@ -63,13 +65,15 @@ const MORE_TABS: { id: Tab; icon: string; label: string; sub: string }[] = [
 const MORE_IDS = new Set<Tab>(MORE_TABS.map((t) => t.id));
 
 const NOTES_KEY = 'hotelClash.notifications';
+const WELCOMED_KEY = 'hotelClash.welcomed';
+// Tabs that are long lists: they scroll themselves (virtualized), not inside the page ScrollView.
+const LIST_TABS = new Set<Tab>(['rooms', 'staff', 'guests']);
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 const cheapestRoom = roomTypes.reduce<(typeof roomTypes)[number] | null>((best, r) => (!best || r.baseCost < best.baseCost ? r : best), null);
 
 export default function GameScreen() {
   const [speed, setSpeed] = useState(0); // 0 = paused, 1 = normal, 2 = fast
-  const speedBeforePause = useRef(1);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [event, setEvent] = useState<{ title: string; description: string; result: string } | null>(null);
@@ -104,15 +108,6 @@ export default function GameScreen() {
     setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), tone === 'error' ? 5000 : 3000);
   }, []);
 
-  /** Pause for a pop-up; `resume()` restores the speed the player had. */
-  const pause = useCallback(() => {
-    setSpeed((sp) => {
-      if (sp) speedBeforePause.current = sp;
-      return 0;
-    });
-  }, []);
-  const resume = useCallback(() => setSpeed(speedBeforePause.current || 1), []);
-
   const handleEffects = (effects: Effect[], after: GameState) => {
     for (const e of effects) {
       switch (e.kind) {
@@ -121,14 +116,12 @@ export default function GameScreen() {
           break;
         case 'event':
           setEvent({ title: e.title, description: e.description, result: e.result });
-          pause();
           break;
         case 'levelup':
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           setConfetti((n) => n + 1);
           setLevelUp({ level: e.level, bonus: e.money, unlocks: e.unlocks || [] });
           track('level_up', { level: e.level });
-          pause();
           break;
         case 'achievement':
           toast('ok', `🏆 ${e.achievement.title}`);
@@ -138,7 +131,6 @@ export default function GameScreen() {
         case 'awayEarnings':
           setAway({ ms: e.ms, amount: e.amount });
           track('away_earnings_shown', { amount: e.amount, minutes: Math.round(e.ms / 60000) });
-          pause();
           break;
         case 'reward':
           if (e.type === 'money') toast('ok', `+$${e.amount.toLocaleString('en-US')}`);
@@ -153,7 +145,7 @@ export default function GameScreen() {
   const effectsRef = useRef(handleEffects);
   effectsRef.current = handleEffects;
 
-  const { state: game, dispatch, sync, newGame, restoreSave, loadLocalSnapshot, flush, user } = useHotelGame({ onEffects: (effects, after) => effectsRef.current(effects, after) });
+  const { state: game, dispatch, dispatchMany, sync, newGame, restoreSave, loadLocalSnapshot, flush, user } = useHotelGame({ onEffects: (effects, after) => effectsRef.current(effects, after) });
   const history = useDayHistory(game);
   const ready = Boolean(game);
 
@@ -188,20 +180,54 @@ export default function GameScreen() {
     setNotes((list) => (list.some((n) => n.day > currentDay) ? list.filter((n) => n.day <= currentDay) : list));
   }, [currentDay]);
 
-  // Start the clock shortly after loading (like the web game), and show any
-  // away earnings left unclaimed when the app was last closed.
+  // First launch: name the hotel before the clock starts (skipped for a hotel
+  // that has already been played, e.g. after signing in on a new phone).
+  const [welcome, setWelcome] = useState(() => !readJson<boolean>(WELCOMED_KEY, false));
+  const finishWelcome = () => {
+    writeJson(WELCOMED_KEY, true);
+    setWelcome(false);
+  };
+  useEffect(() => {
+    if (welcome && game && game.day > 1) finishWelcome();
+  }, [welcome, game?.day]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Show me" from the getting-started guide: a hint at the top of that tab.
+  const [coach, setCoach] = useState<Step | null>(null);
+
+  // Pop-ups show one at a time: away earnings, then level-up, then the event.
+  const popup: 'away' | 'levelup' | 'event' | null = away ? 'away' : levelUp ? 'levelup' : event ? 'event' : null;
+  // The clock holds while anything covers the game (pop-ups and sheets), and
+  // resumes at the player's speed afterwards (a paused game stays paused).
+  const blocking = Boolean(popup || welcome || account || showSaves || showShop || showNewGame || showHelp || showManage);
+  const heldSpeed = useRef<number | null>(null);
+  useEffect(() => {
+    if (blocking) {
+      setSpeed((sp) => {
+        if (heldSpeed.current == null) heldSpeed.current = sp;
+        return 0;
+      });
+    } else if (heldSpeed.current != null) {
+      const sp = heldSpeed.current;
+      heldSpeed.current = null;
+      if (sp) setSpeed(sp);
+    }
+  }, [blocking]);
+
+  // Start the clock shortly after loading (like the web game), unless something
+  // is waiting (welcome, away earnings left unclaimed when the app was closed).
   const autoStarted = useRef(false);
   useEffect(() => {
     if (!game || autoStarted.current) return undefined;
     autoStarted.current = true;
     track('game_screen_open', { native: true });
     if (game.away) {
+      heldSpeed.current = 1;
       setAway(game.away);
       return undefined;
     }
+    if (welcome) return undefined;
     const t = setTimeout(() => setSpeed((sp) => (sp === 0 ? 1 : sp)), 800);
     return () => clearTimeout(t);
-  }, [game]);
+  }, [game]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Android back: a "More" screen goes back to More, any other tab to the Hotel tab,
   // and only the Hotel tab leaves the app. (Pop-ups close themselves via onRequestClose.)
@@ -263,7 +289,6 @@ export default function GameScreen() {
     const result = dispatch('CLAIM_AWAY_EARNINGS', { doubled });
     track('away_earnings_claimed', { doubled, amount: result.amount || 0 });
     setAway(null);
-    resume();
   };
 
   const navigate = (next: Tab) => {
@@ -320,26 +345,39 @@ export default function GameScreen() {
   ];
 
   const g = game as GameState;
+  const banners = (
+    <>
+      <DebtBanner game={g} onNavigate={navigate} onBuyCoins={Platform.OS === 'android' ? () => setShowShop(true) : undefined} />
+      {coach && coach.tab === tab && <CoachHint step={coach} game={g} onDone={() => setCoach(null)} />}
+    </>
+  );
   return (
     <SafeAreaView style={st.root} edges={['top', 'left', 'right']}>
       <Hud game={g} speed={speed} onSpeed={setSpeed} sync={sync} dayMs={DAY_MS[speed] || 3000} menu={menu} onCredits={Platform.OS === 'android' ? () => setShowShop(true) : undefined} />
 
-      <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={st.content} keyboardShouldPersistTaps="handled">
-        <DebtBanner game={g} onNavigate={navigate} onBuyCoins={Platform.OS === 'android' ? () => setShowShop(true) : undefined} />
-        {tab === 'dashboard' && <GettingStarted game={g} onNavigate={(t) => navigate(t as Tab)} />}
-        {tab === 'dashboard' && <Dashboard game={g} history={history} cheapestRoom={cheapestRoom} onNavigate={navigate} onQuickBuild={() => cheapestRoom && act('BUILD_ROOM', { roomType: cheapestRoom.type }, `Built a new ${cheapestRoom.type} room.`)} />}
+      <View style={{ flex: 1 }}>
+      {LIST_TABS.has(tab) ? (
+        <>
         {tab === 'rooms' && (
           <RoomsTab
+            top={banners}
             game={g}
             roomTypes={roomTypes}
             buildRoom={(type) => act('BUILD_ROOM', { roomType: type }, `Built a new ${type} room.`)}
             upgradeRoom={(roomId) => act('UPGRADE_ROOM', { roomId }, `Room #${roomId} upgraded — guests will notice.`)}
             adjustRoomPrice={(roomId, price) => act('SET_ROOM_PRICE', { roomId, price: Number(price) })}
+            setPrices={(changes) => {
+              const results = dispatchMany(changes.map((c) => ({ type: 'SET_ROOM_PRICE', ...c })));
+              const failed = results.find((r) => !r.ok);
+              if (failed) toast('error', explainRejection(failed));
+              else if (results.length) toast('ok', `Updated ${results.length} room price${results.length === 1 ? '' : 's'}.`);
+            }}
             buyPlot={() => act('BUY_PLOT', {}, 'Bought a new plot of land.')}
           />
         )}
         {tab === 'staff' && (
           <StaffTab
+            top={banners}
             game={g}
             staffRoles={staffRoles}
             trainingPrograms={trainingPrograms}
@@ -348,6 +386,13 @@ export default function GameScreen() {
             conductTraining={(trainingId, staffId) => act('TRAIN_STAFF', { trainingId, staffId }, 'Training complete — skills improved.')}
           />
         )}
+        {tab === 'guests' && <GuestsTab top={banners} game={g} notifications={notes} />}
+        </>
+      ) : (
+      <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={st.content} keyboardShouldPersistTaps="handled">
+        {banners}
+        {tab === 'dashboard' && <GettingStarted game={g} onNavigate={(t, step) => { setCoach(step); navigate(t as Tab); }} />}
+        {tab === 'dashboard' && <Dashboard game={g} history={history} cheapestRoom={cheapestRoom} onNavigate={navigate} onQuickBuild={() => cheapestRoom && act('BUILD_ROOM', { roomType: cheapestRoom.type }, `Built a new ${cheapestRoom.type} room.`)} />}
         {tab === 'facilities' && (
           <FacilitiesTab
             game={g}
@@ -368,7 +413,6 @@ export default function GameScreen() {
         {tab === 'finance' && (
           <FinanceTab game={g} history={history} onSetInsurance={(plan) => act('SET_INSURANCE', { plan }, plan === 'none' ? 'Insurance cancelled.' : 'Your hotel is insured.')} />
         )}
-        {tab === 'guests' && <GuestsTab game={g} notifications={notes} />}
         {tab === 'rivals' && (
           <RivalsTab
             game={g}
@@ -397,7 +441,7 @@ export default function GameScreen() {
         {tab === 'more' && (
           <View style={st.moreGrid}>
             {MORE_TABS.map((t) => (
-              <Pressable key={t.id} onPress={() => navigate(t.id)} style={({ pressed }) => [st.moreTile, pressed && { opacity: 0.8 }]}>
+              <Pressable key={t.id} onPress={() => navigate(t.id)} style={({ pressed }) => [st.moreTile, pressed && { opacity: 0.8 }]} accessibilityRole="button" accessibilityLabel={`${t.label}: ${t.sub}`}>
                 <Text style={{ fontSize: 26 }}>{t.icon}</Text>
                 <Text style={[s.title, { marginTop: 6 }]}>{t.label}</Text>
                 <Text style={s.tiny}>{t.sub}</Text>
@@ -406,9 +450,11 @@ export default function GameScreen() {
           </View>
         )}
       </ScrollView>
-
-      <Confetti trigger={confetti} />
-      <Toasts toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+      )}
+        {/* Inside the content area, so they sit above the banner and tab bar. */}
+        <Confetti trigger={confetti} />
+        <Toasts toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+      </View>
 
       {!removeAds.owned && adsConsent.canRequestAds && (
         <View style={st.banner}>
@@ -420,25 +466,24 @@ export default function GameScreen() {
         {TABS.map((t) => {
           const on = tab === t.id || (t.id === 'more' && MORE_IDS.has(tab));
           return (
-            <Pressable key={t.id} onPress={() => navigate(t.id)} style={st.tabBtn} accessibilityRole="tab" accessibilityState={{ selected: on }}>
-              <Text style={[st.tabIcon, !on && { opacity: 0.55 }]}>{t.icon}</Text>
+            <Pressable key={t.id} onPress={() => navigate(t.id)} style={st.tabBtn} accessibilityRole="tab" accessibilityLabel={t.label} accessibilityState={{ selected: on }}>
+              <Ionicons name={on ? t.icon : (`${t.icon}-outline` as typeof t.icon)} size={22} color={on ? C.indigo : '#64748b'} />
               <Text style={[st.tabLabel, on && st.tabLabelOn]}>{t.label}</Text>
             </Pressable>
           );
         })}
       </SafeAreaView>
 
-      <AwayModal away={away} adReady={adReady} busy={adBusy} onCollect={() => claimAway(false)} onDouble={() => claimAway(true)} />
+      <AwayModal away={popup === 'away' ? away : null} adReady={adReady} busy={adBusy} onCollect={() => claimAway(false)} onDouble={() => claimAway(true)} />
       <EventModal
-        event={event}
+        event={popup === 'event' ? event : null}
         onClose={() => {
           setEvent(null);
-          resume();
           maybeShowInterstitial('event');
         }}
       />
       <LevelUpModal
-        levelUp={levelUp}
+        levelUp={popup === 'levelup' ? levelUp : null}
         next={insights.levelProgress(g)}
         onSaveHotel={
           signedIn
@@ -451,15 +496,28 @@ export default function GameScreen() {
         onGo={(next) => {
           setLevelUp(null);
           navigate(next);
-          resume();
         }}
         onClose={() => {
           setLevelUp(null);
-          resume();
           maybeShowInterstitial('level_up');
         }}
       />
       <GameOverModal game={g} onNewGame={() => setShowNewGame(true)} />
+      <WelcomeModal
+        open={welcome}
+        defaultName={g.hotelName === 'My Hotel' ? '' : g.hotelName}
+        onStart={async (hotelName) => {
+          // Nothing has been played yet: start the hotel under the chosen name.
+          if (hotelName !== g.hotelName && g.day <= 1) await newGame({ hotelName, hotelType: g.hotelType });
+          finishWelcome();
+          track('tutorial_begin');
+          setSpeed(1);
+        }}
+        onSignIn={() => {
+          finishWelcome();
+          setAccount({ mode: 'login' });
+        }}
+      />
       <HowToPlay open={showHelp} onClose={() => setShowHelp(false)} />
       {account && (
         <AccountModal
@@ -467,6 +525,7 @@ export default function GameScreen() {
           initialMode={account.mode}
           reason={account.reason}
           hotelName={g.hotelName}
+          guestHotel={sync.mode === 'guest' ? { hotelName: g.hotelName, day: g.day, money: g.money } : null}
           onClose={() => setAccount(null)}
           onSignedIn={() => {
             setAccount(null);
@@ -534,11 +593,11 @@ const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   center: { alignItems: 'center', justifyContent: 'center' },
   content: { padding: 12, paddingBottom: 24 },
-  banner: { alignItems: 'center', backgroundColor: '#f5f5f5' },
+  // Room kept for the adaptive banner (≥50dp on phones) so the layout doesn't jump when it loads.
+  banner: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#f5f5f5', minHeight: 50 },
   tabBar: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: C.line },
-  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 6 },
-  tabIcon: { fontSize: 20 },
-  tabLabel: { fontSize: 10, fontWeight: '600', color: C.faint, marginTop: 2 },
+  tabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 52, paddingVertical: 6 },
+  tabLabel: { fontSize: 11, fontWeight: '600', color: '#64748b', marginTop: 2 },
   tabLabelOn: { color: C.indigo },
   moreGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   moreTile: { flexGrow: 1, flexBasis: '45%', backgroundColor: '#fff', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line },

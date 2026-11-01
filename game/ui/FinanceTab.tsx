@@ -94,7 +94,7 @@ export default function FinanceTab({ game, history, onSetInsurance }: { game: Ga
               </View>
               <Text style={{ fontSize: 18, fontWeight: '800', color: C.text, marginTop: 4 }}>
                 {usd(insights.insurancePremium(game, id))}
-                <Text style={{ fontSize: 12, color: C.faint }}>/day</Text>
+                <Text style={{ fontSize: 12, color: C.sub }}>/day</Text>
               </Text>
               <Text style={[s.small, { marginTop: 2 }]}>
                 {cap == null ? 'You pay the full cost of every disaster.' : `A disaster costs you at most ${usd(cap)} (about ${p.deductibleDays} days of business).`}

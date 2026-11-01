@@ -45,7 +45,7 @@ export default function ActivityFeed({ notifications, onClear }: { notifications
         <TabHeader icon="🔔" title="Activity" />
         {notifications.length > 0 && (
           <Pressable onPress={onClear}>
-            <Text style={{ fontSize: 12, color: C.faint }}>Clear</Text>
+            <Text style={{ fontSize: 12, color: C.sub }}>Clear</Text>
           </Pressable>
         )}
       </View>

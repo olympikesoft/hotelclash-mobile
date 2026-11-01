@@ -135,6 +135,7 @@ export function Button({
   busy,
   style,
   big,
+  accessibilityLabel,
 }: {
   children: React.ReactNode;
   onPress?: () => void;
@@ -143,6 +144,8 @@ export function Button({
   busy?: boolean;
   style?: StyleProp<ViewStyle>;
   big?: boolean;
+  /** For buttons whose text is only an emoji or symbol (e.g. ✕). */
+  accessibilityLabel?: string;
 }) {
   const v = BTN[variant];
   const off = disabled || busy;
@@ -150,6 +153,9 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={off}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled: Boolean(off), busy: Boolean(busy) }}
       style={({ pressed }) => [
         s.btn,
         big && s.btnBig,
@@ -173,7 +179,7 @@ export function Chips<T extends string>({ options, value, onChange }: { options:
   return (
     <View style={s.chips}>
       {options.map((o) => (
-        <Pressable key={o.id} onPress={() => onChange(o.id)} style={[s.chip, value === o.id && s.chipOn]}>
+        <Pressable key={o.id} onPress={() => onChange(o.id)} style={[s.chip, value === o.id && s.chipOn]} accessibilityRole="tab" accessibilityState={{ selected: value === o.id }} hitSlop={{ top: 5, bottom: 5 }}>
           <Text style={[s.chipText, value === o.id && s.chipTextOn]}>{o.label}</Text>
         </Pressable>
       ))}
@@ -191,9 +197,9 @@ export const s = StyleSheet.create({
   tabSubtitle: { marginTop: 2, fontSize: 13, color: C.sub },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   stat: { flexGrow: 1, flexBasis: '45%', backgroundColor: C.card, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: C.line },
-  statLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', color: C.faint },
+  statLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', color: C.sub },
   statValue: { fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  statSub: { fontSize: 11, color: C.faint },
+  statSub: { fontSize: 11, color: C.sub },
   section: { marginBottom: 20 },
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, gap: 8 },
   sectionTitle: { fontSize: 14, fontWeight: '700', color: C.text },
@@ -203,20 +209,21 @@ export const s = StyleSheet.create({
   meterFill: { height: '100%', borderRadius: 3 },
   stars: { color: '#fbbf24', fontSize: 13, letterSpacing: 1 },
   pill: { fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden', alignSelf: 'flex-start' },
-  btn: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1, minHeight: 38 },
+  btn: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1, minHeight: 44 },
   btnBig: { paddingVertical: 13, borderRadius: 12 },
   btnText: { fontSize: 13, fontWeight: '700' },
   btnTextBig: { fontSize: 15 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: '#f1f5f9' },
+  chip: { paddingHorizontal: 12, minHeight: 34, justifyContent: 'center', borderRadius: 999, backgroundColor: '#f1f5f9' },
   chipOn: { backgroundColor: C.dark },
   chipText: { fontSize: 12, fontWeight: '600', color: '#475569' },
   chipTextOn: { color: '#fff' },
-  empty: { backgroundColor: '#f8fafc', borderRadius: 12, paddingVertical: 28, textAlign: 'center', fontSize: 13, color: C.faint },
+  empty: { backgroundColor: '#f8fafc', borderRadius: 12, paddingVertical: 28, textAlign: 'center', fontSize: 13, color: C.sub },
   row: { flexDirection: 'row', alignItems: 'center' },
   between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 14, fontWeight: '700', color: C.text },
-  small: { fontSize: 12, color: C.sub },
-  tiny: { fontSize: 11, color: C.faint },
+  small: { fontSize: 12, color: '#475569' },
+  // #64748b on white is 4.8:1 (WCAG AA); the lighter #94a3b8 is only for decoration.
+  tiny: { fontSize: 11, color: C.sub },
   icon: { fontSize: 18, backgroundColor: C.indigoSoft, borderRadius: 10, padding: 6, overflow: 'hidden', marginRight: 10 },
 });

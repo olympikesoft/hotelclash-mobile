@@ -2,6 +2,7 @@
 import {
   newGame,
   applyAction,
+  applyActionInPlace,
   replay,
   hashState,
   stateFromLegacy,
@@ -252,6 +253,39 @@ export class GameStore {
       this._changed();
     }
     return result;
+  }
+
+  /**
+   * Apply several actions as one update (e.g. "set all Deluxe rooms to $120").
+   * Same result and same recorded actions as calling dispatch() for each, but
+   * the state is copied once instead of once per action, and listeners fire once.
+   * @param {{ type: string, [key: string]: any }[]} list
+   * @returns {{ ok: boolean, error?: string, effects: object[] }[]} one result per action
+   */
+  dispatchMany(list) {
+    const d = this.data;
+    const S = structuredClone(d.current);
+    const results = [];
+    let accepted = 0;
+    for (const { type, ...payload } of list) {
+      const action = { ...payload, seq: d.confirmed.seq + d.pending.length + 1, t: this.now(), type };
+      const result = applyActionInPlace(S, action);
+      if (result.ok) {
+        d.pending.push(action);
+        accepted += 1;
+      }
+      results.push(result);
+    }
+    if (accepted) {
+      d.current = S;
+      if (d.mode === 'guest' && d.pending.length > GUEST_LOG_CAP) {
+        d.confirmed = { seq: d.confirmed.seq + d.pending.length, state: d.current };
+        d.pending = [];
+        d.origin = 'compacted';
+      }
+      this._changed();
+    }
+    return results;
   }
 
   /** Start over (signed-in players get a new server session). */
