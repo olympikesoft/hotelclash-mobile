@@ -3,8 +3,8 @@
 // After sign-in the GameStore attaches this phone's hotel to the account
 // (adopted if it's a new guest game, otherwise the account's server hotel wins).
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { apiError, authAPI } from '../platform/api';
+import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { apiError, authAPI, PRIVACY_URL, TERMS_URL } from '../platform/api';
 import { track } from '../../services/analytics';
 import { Button, C, s } from './kit';
 
@@ -107,6 +107,19 @@ export default function AccountModal({ open, initialMode = 'register', reason, h
             <Button big onPress={submit} busy={busy}>
               {mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create free account' : 'Send reset link'}
             </Button>
+            {mode === 'register' && (
+              <Text style={[s.tiny, { textAlign: 'center', marginTop: 8 }]}>
+                By creating an account you agree to the{' '}
+                <Text style={st.inlineLink} onPress={() => Linking.openURL(TERMS_URL)}>
+                  Terms
+                </Text>{' '}
+                and the{' '}
+                <Text style={st.inlineLink} onPress={() => Linking.openURL(PRIVACY_URL)}>
+                  Privacy Policy
+                </Text>
+                .
+              </Text>
+            )}
             <View style={{ marginTop: 14, gap: 10, alignItems: 'center' }}>
               {mode !== 'login' && (
                 <Pressable onPress={() => switchTo('login')}>
@@ -142,4 +155,90 @@ const st = StyleSheet.create({
   error: { color: '#be123c', backgroundColor: C.redSoft, borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 12 },
   info: { color: '#065f46', backgroundColor: C.greenSoft, borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 12 },
   link: { fontSize: 13, fontWeight: '600', color: C.indigo },
+  inlineLink: { color: C.indigo, fontWeight: '600', textDecorationLine: 'underline' },
 });
+
+/**
+ * Account screen for signed-in players: sign out, or delete the account
+ * (Google Play requires in-app deletion for apps that create accounts).
+ */
+export function ManageAccountModal({ open, username, onClose, onSignOut, onDeleted }: { open: boolean; username?: string; onClose: () => void; onSignOut: () => void; onDeleted: () => void }) {
+  const [deleting, setDeleting] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    setDeleting(false);
+    setPassword('');
+    setError(null);
+    onClose();
+  };
+  const remove = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await authAPI.deleteAccount(password);
+      track('account_deleted');
+      setDeleting(false);
+      setPassword('');
+      onDeleted();
+    } catch (err) {
+      setError(apiError(err, 'Could not delete the account.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal visible={open} transparent animationType="slide" onRequestClose={close}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={st.backdrop}>
+        <View style={st.sheet}>
+          <View style={st.head}>
+            <View style={s.between}>
+              <Text style={st.title}>👤 {username || 'Your account'}</Text>
+              <Pressable onPress={close} hitSlop={10} accessibilityLabel="Close">
+                <Text style={{ color: '#fff', fontSize: 18 }}>✕</Text>
+              </Pressable>
+            </View>
+            <Text style={st.sub}>Your hotel is saved to this account and syncs across devices.</Text>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 18, gap: 10 }} keyboardShouldPersistTaps="handled">
+            {!deleting ? (
+              <>
+                <Button big variant="ghost" onPress={onSignOut}>
+                  Sign out
+                </Button>
+                <Button big variant="danger" onPress={() => setDeleting(true)}>
+                  Delete account…
+                </Button>
+                <View style={[s.row, { justifyContent: 'center', gap: 16, marginTop: 6 }]}>
+                  <Text style={st.link} onPress={() => Linking.openURL(PRIVACY_URL)}>
+                    Privacy Policy
+                  </Text>
+                  <Text style={st.link} onPress={() => Linking.openURL(TERMS_URL)}>
+                    Terms
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 13, color: '#9f1239', backgroundColor: C.redSoft, borderRadius: 10, padding: 10 }}>
+                  This permanently deletes your account: your hotel, cloud saves, ranking, invites and coins. It can't be undone. Purchases (like Remove ads) stay with your Google account.
+                </Text>
+                <Field label="PASSWORD" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete="password" textContentType="password" />
+                {error ? <Text style={st.error}>{error}</Text> : null}
+                <Button big variant="danger" busy={busy} disabled={!password} onPress={remove}>
+                  Delete my account permanently
+                </Button>
+                <Button big variant="ghost" onPress={() => setDeleting(false)}>
+                  Keep my account
+                </Button>
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}

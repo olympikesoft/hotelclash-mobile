@@ -2,17 +2,25 @@
 // GameStore, ticks the clock, turns engine effects into pop-ups and toasts.
 // Mirrors the web's pages/game.js.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import useHotelGame from './useHotelGame';
 import useDayHistory from './useDayHistory';
 import { engineData, facilityTypes, insights, roomTypes, staffRoles, trainingPrograms } from './catalog';
 import { readJson, writeJson } from './platform/storage';
-import { signOut } from './platform/api';
-import AccountModal from './ui/AccountModal';
+import { PRIVACY_URL, hasAccountToken, paymentAPI, signOut } from './platform/api';
+import { onCoinsGranted, retryUnfinished } from './platform/coinShop';
+import CoinShop from './ui/CoinShop';
+import AccountModal, { ManageAccountModal } from './ui/AccountModal';
+import DebtBanner from './ui/DebtBanner';
+import Confetti from './ui/Confetti';
+import * as Haptics from 'expo-haptics';
 import SavesModal from './ui/SavesModal';
 import { isRewardedAdReady, preloadRewardedAd, showRewardedAd } from './platform/rewardedAd';
+import { maybeShowInterstitial, preloadInterstitial } from './platform/interstitialAd';
+import { cancelAwayReminder, scheduleAwayReminder } from './platform/awayReminder';
+import { showAdPrivacyOptions, useAdsConsent } from '../services/adsConsent';
 import { track } from '../services/analytics';
 import { buyRemoveAds, useRemoveAds } from '../services/removeAds';
 import type { Effect, GameState } from './types';
@@ -74,9 +82,13 @@ export default function GameScreen() {
   const [showHelp, setShowHelp] = useState(false);
   const [account, setAccount] = useState<{ mode: 'login' | 'register'; reason?: string } | null>(null);
   const [showSaves, setShowSaves] = useState(false);
+  const [showManage, setShowManage] = useState(false);
+  const [showShop, setShowShop] = useState(false);
+  const [confetti, setConfetti] = useState(0);
   const [notes, setNotes] = useState<Note[]>(() => readJson<Note[]>(NOTES_KEY, []));
   const scrollRef = useRef<ScrollView>(null);
   const removeAds = useRemoveAds();
+  const adsConsent = useAdsConsent();
 
   // The engine decides what to report; the Activity tab groups repeats.
   const addNote = (message: string, isSpecial: boolean, type: string, day: number) =>
@@ -112,12 +124,15 @@ export default function GameScreen() {
           pause();
           break;
         case 'levelup':
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          setConfetti((n) => n + 1);
           setLevelUp({ level: e.level, bonus: e.money, unlocks: e.unlocks || [] });
           track('level_up', { level: e.level });
           pause();
           break;
         case 'achievement':
           toast('ok', `🏆 ${e.achievement.title}`);
+          setConfetti((n) => n + 1);
           track('achievement', { id: e.achievement.id });
           break;
         case 'awayEarnings':
@@ -142,6 +157,30 @@ export default function GameScreen() {
   const history = useDayHistory(game);
   const ready = Boolean(game);
 
+  // Coins waiting on the server (sign-up bonus, invites, purchases) are collected
+  // once and added as RECEIVE_COINS, which the server checks against its records.
+  // Only into an account-attached game: a guest game would lose them.
+  const modeRef = useRef(sync.mode);
+  modeRef.current = sync.mode;
+  const deliverCoins = useCallback(async () => {
+    if (modeRef.current !== 'account' || !hasAccountToken()) return;
+    try {
+      const { newCredits, delivered } = await paymentAPI.checkPayments();
+      if (newCredits > 0) {
+        for (const d of delivered) dispatch('RECEIVE_COINS', { ref: d.id, amount: Math.round(d.amount) });
+        toast('ok', `🎁 ${newCredits.toLocaleString('en-US')} coins added to your balance!`);
+      }
+    } catch {
+      // offline: collected on the next launch
+    }
+  }, [dispatch, toast]);
+  useEffect(() => {
+    if (sync.mode !== 'account') return;
+    deliverCoins();
+    retryUnfinished();
+  }, [sync.mode, user?.id, deliverCoins]);
+  useEffect(() => onCoinsGranted(() => deliverCoins()), [deliverCoins]);
+
   // Drop log entries "from the future" (a previous hotel, or a server correction).
   const currentDay = game ? game.day : null;
   useEffect(() => {
@@ -164,10 +203,28 @@ export default function GameScreen() {
     return () => clearTimeout(t);
   }, [game]);
 
+  // Android back: a "More" screen goes back to More, any other tab to the Hotel tab,
+  // and only the Hotel tab leaves the app. (Pop-ups close themselves via onRequestClose.)
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (tab === 'dashboard') return false;
+      setTab(MORE_IDS.has(tab) ? 'more' : 'dashboard');
+      return true;
+    });
+    return () => sub.remove();
+  }, [tab]);
+
   // The clock stops while the app is in the background; the engine pays away
   // earnings for the gap on the first tick back.
+  const gameRef = useRef<GameState | null>(null);
+  gameRef.current = game;
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (st) => setAppActive(st === 'active'));
+    cancelAwayReminder();
+    const sub = AppState.addEventListener('change', (st) => {
+      setAppActive(st === 'active');
+      if (st === 'background') scheduleAwayReminder(gameRef.current);
+      else if (st === 'active') cancelAwayReminder();
+    });
     return () => sub.remove();
   }, []);
   useEffect(() => {
@@ -178,15 +235,21 @@ export default function GameScreen() {
 
   useEffect(() => {
     preloadRewardedAd();
+    preloadInterstitial();
     const id = setInterval(() => setAdReady(isRewardedAdReady()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  /** Run a player action and always tell the player what happened. */
+  /** Run a player action and always tell the player what happened (with a buzz). */
   const act = (type: string, payload?: object, okText?: string) => {
     const result = dispatch(type, payload);
-    if (!result.ok) toast('error', explainRejection(result));
-    else if (okText) toast('ok', okText);
+    if (!result.ok) {
+      toast('error', explainRejection(result));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    } else {
+      if (okText) toast('ok', okText);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
     return result;
   };
 
@@ -230,6 +293,7 @@ export default function GameScreen() {
         text: 'Sign out',
         style: 'destructive',
         onPress: () => {
+          setShowManage(false);
           flush().finally(() => {
             signOut();
             setNotes([]);
@@ -241,23 +305,27 @@ export default function GameScreen() {
 
   const menu: MenuItem[] = [
     ...(signedIn
-      ? [{ icon: '👤', label: `${user?.username || 'Account'} · Sign out`, onPress: confirmSignOut }]
+      ? [{ icon: '👤', label: `${user?.username || 'Account'} · account`, onPress: () => setShowManage(true) }]
       : [
           { icon: '☁️', label: 'Save my hotel (free account)', onPress: () => setAccount({ mode: 'register' }) },
           { icon: '👤', label: 'Sign in', onPress: () => setAccount({ mode: 'login' }) },
         ]),
     { icon: '💾', label: signedIn ? 'Cloud saves' : 'Saves on this phone', onPress: () => setShowSaves(true) },
+    ...(Platform.OS === 'android' ? [{ icon: '💎', label: 'Buy coins', onPress: () => setShowShop(true) }] : []),
     { icon: '❓', label: 'How to play', onPress: () => setShowHelp(true) },
     { icon: '🔄', label: 'New hotel…', onPress: () => setShowNewGame(true) },
+    { icon: '🔒', label: 'Privacy policy', onPress: () => Linking.openURL(PRIVACY_URL) },
+    ...(adsConsent.privacyOptions ? [{ icon: '🛡️', label: 'Ad privacy options', onPress: showAdPrivacyOptions }] : []),
     ...(!removeAds.owned && removeAds.price ? [{ icon: '🚫', label: `Remove ads · ${removeAds.price}`, onPress: buyRemoveAds }] : []),
   ];
 
   const g = game as GameState;
   return (
     <SafeAreaView style={st.root} edges={['top', 'left', 'right']}>
-      <Hud game={g} speed={speed} onSpeed={setSpeed} sync={sync} dayMs={DAY_MS[speed] || 3000} menu={menu} />
+      <Hud game={g} speed={speed} onSpeed={setSpeed} sync={sync} dayMs={DAY_MS[speed] || 3000} menu={menu} onCredits={Platform.OS === 'android' ? () => setShowShop(true) : undefined} />
 
       <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={st.content} keyboardShouldPersistTaps="handled">
+        <DebtBanner game={g} onNavigate={navigate} onBuyCoins={Platform.OS === 'android' ? () => setShowShop(true) : undefined} />
         {tab === 'dashboard' && <GettingStarted game={g} onNavigate={(t) => navigate(t as Tab)} />}
         {tab === 'dashboard' && <Dashboard game={g} history={history} cheapestRoom={cheapestRoom} onNavigate={navigate} onQuickBuild={() => cheapestRoom && act('BUILD_ROOM', { roomType: cheapestRoom.type }, `Built a new ${cheapestRoom.type} room.`)} />}
         {tab === 'rooms' && (
@@ -339,9 +407,10 @@ export default function GameScreen() {
         )}
       </ScrollView>
 
+      <Confetti trigger={confetti} />
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
-      {!removeAds.owned && (
+      {!removeAds.owned && adsConsent.canRequestAds && (
         <View style={st.banner}>
           <BannerAd unitId={BANNER_ID} size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER} requestOptions={{ requestNonPersonalizedAdsOnly: true }} />
         </View>
@@ -365,6 +434,7 @@ export default function GameScreen() {
         onClose={() => {
           setEvent(null);
           resume();
+          maybeShowInterstitial('event');
         }}
       />
       <LevelUpModal
@@ -386,6 +456,7 @@ export default function GameScreen() {
         onClose={() => {
           setLevelUp(null);
           resume();
+          maybeShowInterstitial('level_up');
         }}
       />
       <GameOverModal game={g} onNewGame={() => setShowNewGame(true)} />
@@ -403,6 +474,27 @@ export default function GameScreen() {
           }}
         />
       )}
+      <CoinShop
+        open={showShop}
+        signedIn={signedIn}
+        coins={g.credits || 0}
+        onClose={() => setShowShop(false)}
+        onSignUp={() => {
+          setShowShop(false);
+          setAccount({ mode: 'register', reason: 'Coins are kept in your account. Create a free account — you get 10,000 coins to start.' });
+        }}
+      />
+      <ManageAccountModal
+        open={showManage}
+        username={user?.username}
+        onClose={() => setShowManage(false)}
+        onSignOut={confirmSignOut}
+        onDeleted={() => {
+          setShowManage(false);
+          setNotes([]);
+          toast('ok', 'Your account was deleted. You can keep playing as a guest.');
+        }}
+      />
       <SavesModal
         open={showSaves}
         isGuest={!signedIn}

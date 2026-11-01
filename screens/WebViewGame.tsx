@@ -28,8 +28,9 @@ import {
   AdEventType,
 } from "react-native-google-mobile-ads";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { track, setAppProperties } from "../../../services/analytics";
-import { buyRemoveAds, useRemoveAds } from "../../../services/removeAds";
+import { track, setAppProperties } from "../services/analytics";
+import { buyRemoveAds, useRemoveAds } from "../services/removeAds";
+import { useAdsConsent } from "../services/adsConsent";
 
 // --- Constants & Helpers ---
 const BANNER_AD_UNIT_ID = __DEV__ ? TestIds.BANNER : "ca-app-pub-7819420241195884/9518012960";
@@ -46,7 +47,7 @@ const APP_VERSION = "1.4.0";
 const WEBVIEW_URL = `https://www.playlobbyboss.com/game?utm_source=app&utm_medium=${Platform.OS}`;
 // Hosts the app keeps inside the WebView; any other link opens in the browser.
 const IN_APP_HOSTS = ["playlobbyboss.com", "www.playlobbyboss.com", "api.playlobbyboss.com"];
-const APP_LOGO = require("../../assets/images/logo.png");
+const APP_LOGO = require("../assets/images/logo.png");
 const COLORS = {
   primary: "#007AFF",
   background: "#FFFFFF",
@@ -172,6 +173,7 @@ const MainScreen: React.FC = () => {
 
   // "Remove ads" purchase: no banner or interstitials (rewarded ads stay, they're opt-in)
   const removeAds = useRemoveAds();
+  const adsConsent = useAdsConsent(); // no ad requests before the consent check
   const adsRemovedRef = useRef<boolean>(removeAds.owned);
   adsRemovedRef.current = removeAds.owned;
 
@@ -368,10 +370,10 @@ const MainScreen: React.FC = () => {
 
   // --- Effect to load the first interstitial ad on mount ---
   useEffect(() => {
-    if (removeAds.owned) return;
+    if (removeAds.owned || !adsConsent.canRequestAds) return;
     const unsubscribe = loadInterstitialAd();
     return unsubscribe;
-  }, [loadInterstitialAd, removeAds.owned]);
+  }, [loadInterstitialAd, removeAds.owned, adsConsent.canRequestAds]);
 
   // Tell the game what the player owns, so it can hide its own ad prompts or
   // offer the purchase in its menu (send { type: 'buyRemoveAds' } to buy)
@@ -384,9 +386,10 @@ const MainScreen: React.FC = () => {
 
   // --- Effect to load the first rewarded ad on mount ---
   useEffect(() => {
+    if (!adsConsent.canRequestAds) return;
     const unsubscribe = loadRewardedAd();
     return unsubscribe;
-  }, [loadRewardedAd]);
+  }, [loadRewardedAd, adsConsent.canRequestAds]);
 
 
   // --- Effects - Loading Timeout (Modified) ---
@@ -737,7 +740,7 @@ const MainScreen: React.FC = () => {
       </View>
 
       {/* Ad Banner */}
-      {isNativeAdBannerVisible && !removeAds.owned && (
+      {isNativeAdBannerVisible && !removeAds.owned && adsConsent.canRequestAds && (
         <View style={styles.adContainer}>
           {adError && !adLoaded && (
             <View style={styles.adErrorPlaceholder}>

@@ -112,6 +112,23 @@ export const authAPI = {
     return data.user as User;
   },
   forgotPassword: (email: string) => api.post('/api/auth/forgot-password', { email: email.trim() }),
+  /** Permanently delete the account and its game data, then sign out (API DELETE /api/user/me). */
+  deleteAccount: async (password: string) => {
+    await api.delete('/api/user/me', { data: { password } });
+    signOut();
+  },
+};
+
+export const PRIVACY_URL = 'https://www.playlobbyboss.com/privacy-policy';
+export const TERMS_URL = 'https://www.playlobbyboss.com/terms-of-service';
+
+// Coins (API src/routes/payments.js). Every grant — sign-up bonus, invites,
+// purchases — is collected once via checkPayments and added to the game as a
+// RECEIVE_COINS action that the server verifies.
+export const paymentAPI = {
+  checkPayments: async () => (await api.post('/api/payments/check-payments')).data as { credits: number; newCredits: number; delivered: { id: string; amount: number; type: string }[] },
+  verifyGooglePlay: async (productId: string, purchaseToken: string) =>
+    (await api.post('/api/payments/google-play', { productId, purchaseToken })).data as { granted: boolean; credits: number },
 };
 
 export type SavedGame = { id: string; name: string; date: string; day: number; money: number; reputation: number; hotelName: string; verified: boolean };

@@ -8,6 +8,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { initializeFirebaseMessaging } from '../services/firebaseNotifications';
 import { initRemoveAds, buyRemoveAds, useRemoveAds } from '../services/removeAds';
+import { startAds } from '../services/adsConsent';
+import { initCoinShop } from '../game/platform/coinShop';
 
 // Release builds: drop the (very chatty) debug logs, they cost CPU on every state change.
 // Warnings and errors stay.
@@ -15,15 +17,6 @@ if (!__DEV__) {
   console.log = () => {};
   console.info = () => {};
   console.debug = () => {};
-}
-
-// Import mobileAds but in a try-catch to handle cases where the module isn't available
-let mobileAds: any = null;
-try {
-  // This might fail in Expo Go, but won't crash the app
-  mobileAds = require('react-native-google-mobile-ads').default;
-} catch (error) {
-  console.warn('Google Mobile Ads module not available:', error);
 }
 
 // Custom header component
@@ -66,44 +59,12 @@ export default function RootLayout() {
   useEffect(() => {
     console.log('Root layout mounted');
     
-    // Initialize AdMob
-    try {
-      const { default: mobileAds, AdsConsent, AdsConsentDebugGeography } = require('react-native-google-mobile-ads');
-      
-      // Configure test devices for AdMob
-      mobileAds()
-        .setRequestConfiguration({
-          // Test device IDs - add your emulator/device IDs here
-          testDeviceIdentifiers: [
-            '__EMULATOR__', // This is a special identifier for emulators
-          ],
-        })
-        .then(() => {
-          console.log('✅ AdMob test device configuration set');
-        });
-
-      mobileAds()
-        .initialize()
-        .then(() => {
-          console.log('✅ AdMob initialized');
-          
-          // Log the device ID for adding to AdMob console
-          console.log('========================================');
-          console.log('To add this device as a test device:');
-          console.log('1. Run the app and trigger an ad');
-          console.log('2. Check logcat for: "To get test ads on this device"');
-          console.log('3. Add the device ID shown in AdMob console');
-          console.log('========================================');
-        })
-        .catch((err: any) => {
-          console.error('❌ AdMob init failed:', err);
-        });
-    } catch (err) {
-      console.warn('⚠️ AdMob not available (likely in Expo Go)', err);
-    }
+    // Ad consent first (Google UMP form where required), then the AdMob SDK.
+    startAds();
+    initRemoveAds();
+    initCoinShop();
 
     // Initialize Firebase Cloud Messaging
-    initRemoveAds();
 
     initializeFirebaseMessaging()
       .then(async () => {

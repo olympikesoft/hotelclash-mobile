@@ -52,9 +52,10 @@ const handlePurchase = async (purchase: Purchase) => {
 
 let started = false;
 
-// Call once at app start
+// Call once at app start (Google Play on Android, the App Store on iOS: create
+// `remove_ads` as a non-consumable in both stores).
 export async function initRemoveAds() {
-  if (started || Platform.OS !== 'android') return;
+  if (started || (Platform.OS !== 'android' && Platform.OS !== 'ios')) return;
   started = true;
 
   if ((await AsyncStorage.getItem(OWNED_KEY).catch(() => null)) === '1') setState({ owned: true });
@@ -93,7 +94,7 @@ export async function buyRemoveAds() {
   track('remove_ads_start');
   setState({ busy: true, error: null });
   try {
-    await requestPurchase({ skus: [REMOVE_ADS_SKU] });
+    await requestPurchase(Platform.OS === 'ios' ? { sku: REMOVE_ADS_SKU } : { skus: [REMOVE_ADS_SKU] });
     // Result arrives in purchaseUpdatedListener / purchaseErrorListener
   } catch (err: any) {
     // Cancels and failures are also reported to purchaseErrorListener

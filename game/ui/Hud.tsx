@@ -73,6 +73,7 @@ export default function Hud({
   sync,
   dayMs,
   menu,
+  onCredits,
 }: {
   game: GameState;
   speed: number;
@@ -80,6 +81,8 @@ export default function Hud({
   sync: SyncInfo;
   dayMs: number;
   menu: MenuItem[];
+  /** Opens the coin shop (Android). */
+  onCredits?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const level = insights.levelProgress(game);
@@ -139,7 +142,15 @@ export default function Hud({
             ) : null
           }
         />
-        <Resource icon="💎" label="Credits" value={Math.round(game.credits || 0).toLocaleString('en-US')} color="#f0abfc" />
+        <Pressable onPress={onCredits} disabled={!onCredits} accessibilityLabel="Buy coins">
+          <Resource
+            icon="💎"
+            label="Credits"
+            value={Math.round(game.credits || 0).toLocaleString('en-US')}
+            color="#f0abfc"
+            badge={onCredits ? <Text style={st.plus}>+</Text> : null}
+          />
+        </Pressable>
         <Resource
           icon={SEASON_ICON[game.season] || '☀️'}
           label="Day"
@@ -215,6 +226,7 @@ const st = StyleSheet.create({
   resIcon: { fontSize: 15 },
   resLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', color: '#94a3b8' },
   resValue: { fontSize: 14, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  plus: { color: '#f5d0fe', backgroundColor: 'rgba(217,70,239,0.3)', fontSize: 11, fontWeight: '800', paddingHorizontal: 5, borderRadius: 4, overflow: 'hidden' },
   delta: { position: 'absolute', top: 2, right: 4, color: '#fff', fontSize: 10, fontWeight: '700', paddingHorizontal: 4, borderRadius: 4, overflow: 'hidden' },
   clockTrack: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.1)' },
   clockFill: { height: '100%', backgroundColor: '#38bdf8' },

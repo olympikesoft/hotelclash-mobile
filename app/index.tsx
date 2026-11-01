@@ -1,12 +1,11 @@
 import React from 'react';
 import { Stack } from 'expo-router';
-import MainScreen from './screen/main/index';
+import MainScreen from '../screens/WebViewGame';
 import GameScreen from '../game/GameScreen';
 
-// Native game (shared engine, no WebView). Dev builds only until it covers
-// sign-in: players with an account on the website play through the WebView,
-// which keeps their cloud progress. Flip to `true` for release once accounts land.
-const USE_NATIVE_GAME = __DEV__;
+// Native game (shared engine, no WebView). The WebView version stays as a
+// fallback: set this to false to ship it instead.
+const USE_NATIVE_GAME = true;
 
 export default function Home() {
   if (USE_NATIVE_GAME) {

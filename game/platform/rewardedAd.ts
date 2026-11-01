@@ -2,6 +2,7 @@
 // resolves `showRewardedAd()` with whether the player earned the reward.
 import { AdEventType, RewardedAd, RewardedAdEventType, TestIds } from 'react-native-google-mobile-ads';
 import { track } from '../../services/analytics';
+import { whenAdsAllowed } from '../../services/adsConsent';
 
 const UNIT_ID = __DEV__ ? TestIds.REWARDED : 'ca-app-pub-7819420241195884/5484175866';
 
@@ -9,6 +10,11 @@ let ad: RewardedAd | null = null;
 let loaded = false;
 
 export function preloadRewardedAd() {
+  if (ad) return;
+  whenAdsAllowed().then((allowed) => allowed && load());
+}
+
+function load() {
   if (ad) return;
   const next = RewardedAd.createForAdRequest(UNIT_ID, { requestNonPersonalizedAdsOnly: true });
   ad = next;
