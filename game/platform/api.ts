@@ -57,3 +57,10 @@ export const gameSessionAPI = {
     (await api.post(`/api/game/session/from-save/${encodeURIComponent(saveId)}`)).data.session,
   engineInfo: async () => (await api.get('/api/game/engine')).data as { engineVersion: number; engineHash: string },
 };
+
+export type RankedHotel = { id: string; rank: number; hotelName: string; name: string; level: number; rating: number; rooms: number; day: number; value: number };
+
+// Leaderboard by hotel value (API src/routes/social.js); public, no account needed.
+export const socialAPI = {
+  leaderboard: async (limit = 50) => (await api.get('/api/social/leaderboard', { params: { limit } })).data as { total: number; leaderboard: RankedHotel[] },
+};

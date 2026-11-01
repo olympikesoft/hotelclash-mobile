@@ -8,7 +8,7 @@ import type { GameState } from '../types';
 import type { DayPoint } from '../useDayHistory';
 import { C, Card, Meter, s, shortUsd, usd } from './kit';
 
-export type Tab = 'dashboard' | 'rooms' | 'staff' | 'facilities' | 'marketing';
+export type Tab = 'dashboard' | 'rooms' | 'staff' | 'facilities' | 'marketing' | 'finance' | 'guests' | 'rivals' | 'ranking' | 'rewards' | 'activity' | 'more';
 
 const TIP_TONE: Record<string, [string, string]> = {
   danger: [C.redSoft, '#9f1239'],
@@ -41,10 +41,10 @@ function Kpi({ label, value, sub, tone = C.text, trend }: { label: string; value
 }
 
 /** Daily profit as bars (green = profit, red = loss), last 30 days. */
-function ProfitBars({ data }: { data: DayPoint[] }) {
+export function ProfitBars({ data, height = 70 }: { data: DayPoint[]; height?: number }) {
   const max = Math.max(1, ...data.map((d) => Math.abs(d.profit)));
   return (
-    <View style={st.bars}>
+    <View style={[st.bars, { height }]}>
       {data.map((d) => (
         <View key={d.day} style={st.barSlot}>
           <View style={[st.bar, { height: `${Math.max(4, (Math.abs(d.profit) / max) * 100)}%`, backgroundColor: d.profit >= 0 ? '#34d399' : '#fb7185' }]} />
@@ -256,7 +256,7 @@ const st = StyleSheet.create({
   quickBtn: { flexGrow: 1, flexBasis: '45%', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.card, borderRadius: 16, padding: 10, borderWidth: 1, borderColor: C.line },
   quickIcon: { fontSize: 18, backgroundColor: C.indigoSoft, borderRadius: 10, padding: 6, overflow: 'hidden' },
   chartEmpty: { backgroundColor: '#f8fafc', borderRadius: 12, paddingVertical: 40, textAlign: 'center', fontSize: 13, color: C.faint },
-  bars: { flexDirection: 'row', alignItems: 'flex-end', height: 70, gap: 2, marginVertical: 8 },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, marginVertical: 8 },
   barSlot: { flex: 1, height: '100%', justifyContent: 'flex-end' },
   bar: { width: '100%', borderRadius: 2 },
   challenge: { borderRadius: 12, padding: 10, marginBottom: 12 },

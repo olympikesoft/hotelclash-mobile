@@ -16,7 +16,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const engineSrc = path.resolve(process.env.ENGINE_SRC || path.join(root, '..', '..', '..', 'node', 'hotel-clash-api', 'engine'));
 const webSrc = path.resolve(process.env.WEB_SRC || path.join(root, '..', '..', 'hotelclash'));
 const checkOnly = process.argv.includes('--check');
-const CORE_FILES = ['gameStore.js', 'insights.js'];
+// onboarding.js: only ONBOARDING_STEPS is used (its localStorage helpers fail safely here).
+const CORE_FILES = ['gameStore.js', 'insights.js', 'onboarding.js'];
 
 for (const dir of [engineSrc, path.join(webSrc, 'src', 'game')]) {
   if (!existsSync(dir)) {

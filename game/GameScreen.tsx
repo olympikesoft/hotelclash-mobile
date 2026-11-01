@@ -1,13 +1,14 @@
 // The native game screen (replaces the WebView): runs the shared engine via
 // GameStore, ticks the clock, turns engine effects into pop-ups and toasts.
-// Mirrors the web's pages/game.js for the phase-1 tabs.
+// Mirrors the web's pages/game.js.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import useHotelGame from './useHotelGame';
 import useDayHistory from './useDayHistory';
-import { facilityTypes, insights, roomTypes, staffRoles, trainingPrograms } from './catalog';
+import { engineData, facilityTypes, insights, roomTypes, staffRoles, trainingPrograms } from './catalog';
+import { readJson, writeJson } from './platform/storage';
 import { isRewardedAdReady, preloadRewardedAd, showRewardedAd } from './platform/rewardedAd';
 import { track } from '../services/analytics';
 import { buyRemoveAds, useRemoveAds } from '../services/removeAds';
@@ -18,8 +19,15 @@ import RoomsTab from './ui/RoomsTab';
 import StaffTab from './ui/StaffTab';
 import FacilitiesTab from './ui/FacilitiesTab';
 import MarketingTab from './ui/MarketingTab';
+import FinanceTab from './ui/FinanceTab';
+import GuestsTab from './ui/GuestsTab';
+import RivalsTab from './ui/RivalsTab';
+import RankingTab from './ui/RankingTab';
+import RewardsTab from './ui/RewardsTab';
+import ActivityFeed, { type Note } from './ui/ActivityFeed';
+import { GettingStarted, HowToPlay, resetOnboarding } from './ui/Guide';
 import { AwayModal, EventModal, GameOverModal, LevelUpModal, NewGameModal, Toasts, explainRejection, type Toast } from './ui/Modals';
-import { C } from './ui/kit';
+import { C, s } from './ui/kit';
 
 const BANNER_ID = __DEV__ ? TestIds.BANNER : 'ca-app-pub-7819420241195884/9518012960';
 const DAY_MS: Record<number, number> = { 1: 3000, 2: 1500 }; // same pacing as the web game
@@ -29,8 +37,22 @@ const TABS: { id: Tab; icon: string; label: string }[] = [
   { id: 'rooms', icon: '🛏️', label: 'Rooms' },
   { id: 'staff', icon: '👥', label: 'Staff' },
   { id: 'facilities', icon: '✨', label: 'Facilities' },
-  { id: 'marketing', icon: '📣', label: 'Marketing' },
+  { id: 'more', icon: '☰', label: 'More' },
 ];
+// Behind "More" (a phone bar fits five tabs).
+const MORE_TABS: { id: Tab; icon: string; label: string; sub: string }[] = [
+  { id: 'marketing', icon: '📣', label: 'Marketing', sub: 'Campaigns & policies' },
+  { id: 'finance', icon: '💵', label: 'Finance', sub: 'Statement & insurance' },
+  { id: 'guests', icon: '🧳', label: 'Guests', sub: 'Moods & reviews' },
+  { id: 'rivals', icon: '🏢', label: 'Rivals', sub: 'Market, visits, buyouts' },
+  { id: 'rewards', icon: '🎁', label: 'Rewards', sub: 'Wheel & bonuses' },
+  { id: 'ranking', icon: '🏆', label: 'Ranking', sub: 'Top hotels' },
+  { id: 'activity', icon: '🔔', label: 'Activity', sub: 'Everything that happened' },
+];
+const MORE_IDS = new Set<Tab>(MORE_TABS.map((t) => t.id));
+
+const NOTES_KEY = 'hotelClash.notifications';
+const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 const cheapestRoom = roomTypes.reduce<(typeof roomTypes)[number] | null>((best, r) => (!best || r.baseCost < best.baseCost ? r : best), null);
 
@@ -46,8 +68,18 @@ export default function GameScreen() {
   const [adReady, setAdReady] = useState(false);
   const [showNewGame, setShowNewGame] = useState(false);
   const [appActive, setAppActive] = useState(true);
+  const [showHelp, setShowHelp] = useState(false);
+  const [notes, setNotes] = useState<Note[]>(() => readJson<Note[]>(NOTES_KEY, []));
   const scrollRef = useRef<ScrollView>(null);
   const removeAds = useRemoveAds();
+
+  // The engine decides what to report; the Activity tab groups repeats.
+  const addNote = (message: string, isSpecial: boolean, type: string, day: number) =>
+    setNotes((prev) => [{ id: `${Date.now()}-${Math.random()}`, message, isSpecial, type: type || 'general', day }, ...prev].slice(0, 150));
+  useEffect(() => {
+    const t = setTimeout(() => writeJson(NOTES_KEY, notes.slice(0, 100)), 1000);
+    return () => clearTimeout(t);
+  }, [notes]);
 
   const toast = useCallback((tone: Toast['tone'], text: string) => {
     const id = Date.now() + Math.random();
@@ -64,9 +96,12 @@ export default function GameScreen() {
   }, []);
   const resume = useCallback(() => setSpeed(speedBeforePause.current || 1), []);
 
-  const handleEffects = (effects: Effect[]) => {
+  const handleEffects = (effects: Effect[], after: GameState) => {
     for (const e of effects) {
       switch (e.kind) {
+        case 'notify':
+          addNote(e.message, Boolean(e.isSpecial), e.type, after.day);
+          break;
         case 'event':
           setEvent({ title: e.title, description: e.description, result: e.result });
           pause();
@@ -90,7 +125,7 @@ export default function GameScreen() {
           else if (e.type === 'credits') toast('ok', `+${e.amount.toLocaleString('en-US')}💎`);
           break;
         default:
-          // notify/celebration/challenge: the activity feed comes in phase 2
+          // celebration/challenge/insufficientFunds: shown by the tabs and toasts
           break;
       }
     }
@@ -98,9 +133,16 @@ export default function GameScreen() {
   const effectsRef = useRef(handleEffects);
   effectsRef.current = handleEffects;
 
-  const { state: game, dispatch, sync, newGame } = useHotelGame({ onEffects: (effects) => effectsRef.current(effects) });
+  const { state: game, dispatch, sync, newGame } = useHotelGame({ onEffects: (effects, after) => effectsRef.current(effects, after) });
   const history = useDayHistory(game);
   const ready = Boolean(game);
+
+  // Drop log entries "from the future" (a previous hotel, or a server correction).
+  const currentDay = game ? game.day : null;
+  useEffect(() => {
+    if (currentDay == null) return;
+    setNotes((list) => (list.some((n) => n.day > currentDay) ? list.filter((n) => n.day <= currentDay) : list));
+  }, [currentDay]);
 
   // Start the clock shortly after loading (like the web game), and show any
   // away earnings left unclaimed when the app was last closed.
@@ -170,7 +212,13 @@ export default function GameScreen() {
     );
   }
 
+  // Wheel spins and rival visits are limited per real (UTC) day.
+  const today = todayUtc();
+  const spinsLeft = engineData.WHEEL_SPINS_PER_DAY - (game.clock?.wheelDate === today ? game.clock.wheelSpins : 0);
+  const visitedToday: string[] = game.clock?.visitDate === today ? game.clock.visited || [] : [];
+
   const menu: MenuItem[] = [
+    { icon: '❓', label: 'How to play', onPress: () => setShowHelp(true) },
     { icon: '🔄', label: 'New hotel…', onPress: () => setShowNewGame(true) },
     ...(!removeAds.owned && removeAds.price ? [{ icon: '🚫', label: `Remove ads · ${removeAds.price}`, onPress: buyRemoveAds }] : []),
   ];
@@ -181,6 +229,7 @@ export default function GameScreen() {
       <Hud game={g} speed={speed} onSpeed={setSpeed} sync={sync} dayMs={DAY_MS[speed] || 3000} menu={menu} />
 
       <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={st.content} keyboardShouldPersistTaps="handled">
+        {tab === 'dashboard' && <GettingStarted game={g} onNavigate={(t) => navigate(t as Tab)} />}
         {tab === 'dashboard' && <Dashboard game={g} history={history} cheapestRoom={cheapestRoom} onNavigate={navigate} onQuickBuild={() => cheapestRoom && act('BUILD_ROOM', { roomType: cheapestRoom.type }, `Built a new ${cheapestRoom.type} room.`)} />}
         {tab === 'rooms' && (
           <RoomsTab
@@ -219,6 +268,37 @@ export default function GameScreen() {
             changePolicy={(key, value) => act('SET_POLICY', { key, value }, value ? 'Policy turned on.' : 'Policy turned off.')}
           />
         )}
+        {tab === 'finance' && (
+          <FinanceTab game={g} history={history} onSetInsurance={(plan) => act('SET_INSURANCE', { plan }, plan === 'none' ? 'Insurance cancelled.' : 'Your hotel is insured.')} />
+        )}
+        {tab === 'guests' && <GuestsTab game={g} notifications={notes} />}
+        {tab === 'rivals' && (
+          <RivalsTab
+            game={g}
+            visitedToday={visitedToday}
+            onVisit={(name) => {
+              const result = act('VISIT_HOTEL', { name });
+              if (result.ok) toast('ok', `Visited ${name}: +$${(result.amount || 0).toLocaleString('en-US')} for the insights.`);
+            }}
+            onAcquire={(competitorId) => act('ACQUIRE_HOTEL', { competitorId })}
+          />
+        )}
+        {tab === 'ranking' && <RankingTab />}
+        {tab === 'rewards' && (
+          <RewardsTab game={g} spinsLeft={spinsLeft} dispatch={dispatch} onWatchAd={() => showRewardedAd('ad_bonus')} adReady={adReady} toast={toast} />
+        )}
+        {tab === 'activity' && <ActivityFeed notifications={notes} onClear={() => setNotes([])} />}
+        {tab === 'more' && (
+          <View style={st.moreGrid}>
+            {MORE_TABS.map((t) => (
+              <Pressable key={t.id} onPress={() => navigate(t.id)} style={({ pressed }) => [st.moreTile, pressed && { opacity: 0.8 }]}>
+                <Text style={{ fontSize: 26 }}>{t.icon}</Text>
+                <Text style={[s.title, { marginTop: 6 }]}>{t.label}</Text>
+                <Text style={s.tiny}>{t.sub}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
@@ -230,12 +310,15 @@ export default function GameScreen() {
       )}
 
       <SafeAreaView edges={['bottom']} style={st.tabBar}>
-        {TABS.map((t) => (
-          <Pressable key={t.id} onPress={() => navigate(t.id)} style={st.tabBtn} accessibilityRole="tab" accessibilityState={{ selected: tab === t.id }}>
-            <Text style={[st.tabIcon, tab !== t.id && { opacity: 0.55 }]}>{t.icon}</Text>
-            <Text style={[st.tabLabel, tab === t.id && st.tabLabelOn]}>{t.label}</Text>
-          </Pressable>
-        ))}
+        {TABS.map((t) => {
+          const on = tab === t.id || (t.id === 'more' && MORE_IDS.has(tab));
+          return (
+            <Pressable key={t.id} onPress={() => navigate(t.id)} style={st.tabBtn} accessibilityRole="tab" accessibilityState={{ selected: on }}>
+              <Text style={[st.tabIcon, !on && { opacity: 0.55 }]}>{t.icon}</Text>
+              <Text style={[st.tabLabel, on && st.tabLabelOn]}>{t.label}</Text>
+            </Pressable>
+          );
+        })}
       </SafeAreaView>
 
       <AwayModal away={away} adReady={adReady} busy={adBusy} onCollect={() => claimAway(false)} onDouble={() => claimAway(true)} />
@@ -260,6 +343,7 @@ export default function GameScreen() {
         }}
       />
       <GameOverModal game={g} onNewGame={() => setShowNewGame(true)} />
+      <HowToPlay open={showHelp} onClose={() => setShowHelp(false)} />
       <NewGameModal
         open={showNewGame}
         defaultName={g.hotelName}
@@ -267,6 +351,8 @@ export default function GameScreen() {
         onClose={() => setShowNewGame(false)}
         onConfirm={async (hotelName) => {
           await newGame({ hotelName, hotelType: g.hotelType });
+          setNotes([]);
+          resetOnboarding();
           setShowNewGame(false);
           setSpeed(0);
           navigate('dashboard');
@@ -287,4 +373,6 @@ const st = StyleSheet.create({
   tabIcon: { fontSize: 20 },
   tabLabel: { fontSize: 10, fontWeight: '600', color: C.faint, marginTop: 2 },
   tabLabelOn: { color: C.indigo },
+  moreGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  moreTile: { flexGrow: 1, flexBasis: '45%', backgroundColor: '#fff', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line },
 });
