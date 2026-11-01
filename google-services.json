@@ -1,0 +1,41 @@
+{
+  "project_info": {
+    "project_number": "976864561464",
+    "firebase_url": "https://hotelclash-6f02d-default-rtdb.firebaseio.com",
+    "project_id": "hotelclash-6f02d",
+    "storage_bucket": "hotelclash-6f02d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:976864561464:android:b9579d37f9063404fc99cd",
+        "android_client_info": {
+          "package_name": "com.olympikesoft.hotelheroapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "976864561464-p919cr0eednhod2bf83t90m8t8qt41s9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCL_VWmEZOvh9RyyqUSCEClG5BPhxSSaF8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "976864561464-p919cr0eednhod2bf83t90m8t8qt41s9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      },
+      "admob_app_id": "ca-app-pub-7819420241195884~1774186405"
+    }
+  ],
+  "configuration_version": "1"
+}

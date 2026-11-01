@@ -1,41 +1,100 @@
 {
   "expo": {
-    "name": "HotelHeroApp",
-    "slug": "HotelHeroApp",
-    "version": "1.0.0",
+    "name": "HotelHero",
+    "slug": "hotelhero-app",
+    "version": "1.4.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.olympikesoft.hotelheroapp",
+      "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
-    },
-    "web": {
-      "bundler": "metro",
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      },
+       "googleServicesFile": "./google-services.json",
+        "config": {
+          "googleMobileAdsAppId": "ca-app-pub-7819420241195884~1774186405"
+        },
+      "versionCode": 3,
+      "package": "com.olympikesoft.hotelheroapp",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
     },
     "plugins": [
-      "expo-router",
       [
-        "expo-splash-screen",
+        "expo-notifications",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "icon": "./assets/images/icon.png",
+          "color": "#ffffff"
+        }
+      ],
+      [
+        "@react-native-firebase/app"
+      ],
+      [
+        "@react-native-firebase/messaging"
+      ],
+      [
+        "react-native-iap",
+        {
+          "paymentProvider": "Play Store"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          },
+          "android": {
+            "kotlinVersion": "2.1.0"
+          }
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-7819420241195884~1774186405",
+          "iosAppId": "ca-app-pub-7819420241195884~1774186405",
+          "android_app_id": "ca-app-pub-7819420241195884~1774186405",
+          "userTrackingPermission": "This app uses ads to provide free content.",
+          "android_rewarded_ad_unit_id": "ca-app-pub-7819420241195884/5484175866",
+          "ios_rewarded_ad_unit_id": "ca-app-pub-7819420241195884/5484175866"
         }
       ]
     ],
-    "experiments": {
-      "typedRoutes": true
-    }
+    "scheme": "hotelhero",
+    "extra": {
+      "eas": {
+        "projectId": "bcedc606-7cda-42fd-9722-55a544c6df56"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/bcedc606-7cda-42fd-9722-55a544c6df56"
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png"
+    },
+    "owner": "olympus"
   }
 }
