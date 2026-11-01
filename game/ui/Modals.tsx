@@ -106,11 +106,14 @@ export function LevelUpModal({
   next,
   onGo,
   onClose,
+  onSaveHotel,
 }: {
   levelUp: { level: number; bonus: number; unlocks: string[] } | null;
   next: any;
   onGo: (tab: 'rooms' | 'marketing' | 'facilities') => void;
   onClose: () => void;
+  /** Guests: offer a free account to keep the hotel. */
+  onSaveHotel?: () => void;
 }) {
   if (!levelUp) return null;
   return (
@@ -146,9 +149,16 @@ export function LevelUpModal({
             {next.unlocks.length ? ` — unlocks ${next.unlocks.slice(0, 2).join(', ')}${next.unlocks.length > 2 ? '…' : ''}` : ''}.
           </Text>
         )}
-        <Button big variant="dark" onPress={onClose} style={{ marginTop: 12 }}>
-          Continue
-        </Button>
+        <View style={[s.row, { gap: 8, marginTop: 12 }]}>
+          {onSaveHotel && (
+            <Button big onPress={onSaveHotel} style={{ flex: 1, backgroundColor: '#fbbf24' }}>
+              <Text style={{ color: '#0f172a', fontWeight: '900' }}>Save my hotel</Text>
+            </Button>
+          )}
+          <Button big variant="dark" onPress={onClose} style={{ flex: 1 }}>
+            Continue
+          </Button>
+        </View>
       </View>
     </Sheet>
   );

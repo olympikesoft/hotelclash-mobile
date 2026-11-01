@@ -1,0 +1,145 @@
+// Sign in / create account / forgot password (ports of the web's login.js,
+// register.js and forgot-password.js, trimmed to what the game needs).
+// After sign-in the GameStore attaches this phone's hotel to the account
+// (adopted if it's a new guest game, otherwise the account's server hotel wins).
+import React, { useState } from 'react';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { apiError, authAPI } from '../platform/api';
+import { track } from '../../services/analytics';
+import { Button, C, s } from './kit';
+
+type Mode = 'login' | 'register' | 'forgot';
+
+function Field(props: React.ComponentProps<typeof TextInput> & { label: string }) {
+  const { label, ...input } = props;
+  return (
+    <View style={{ marginBottom: 12 }}>
+      <Text style={st.label}>{label}</Text>
+      <TextInput placeholderTextColor={C.faint} autoCorrect={false} style={st.input} {...input} />
+    </View>
+  );
+}
+
+export default function AccountModal({ open, initialMode = 'register', reason, hotelName, onClose, onSignedIn }: { open: boolean; initialMode?: Mode; reason?: string; hotelName?: string; onClose: () => void; onSignedIn: () => void }) {
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  const switchTo = (next: Mode) => {
+    setMode(next);
+    setError(null);
+    setInfo(null);
+  };
+
+  const submit = async () => {
+    setError(null);
+    setInfo(null);
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) return setError('Enter a valid email.');
+    if (mode !== 'forgot' && password.length < 6) return setError('Password must be at least 6 characters.');
+    if (mode === 'register' && username && (username.trim().length < 3 || username.trim().length > 30)) return setError('Username must be 3–30 characters.');
+    setBusy(true);
+    try {
+      if (mode === 'forgot') {
+        await authAPI.forgotPassword(email);
+        setInfo('If that email has an account, a reset link is on its way. Set a new password, then sign in here.');
+        track('password_reset_requested');
+        return;
+      }
+      if (mode === 'login') await authAPI.login(email, password);
+      else await authAPI.register({ email: email.trim(), password, username: username.trim() || undefined, hotelName, inviteCode: inviteCode.trim() || undefined });
+      track(mode === 'login' ? 'login' : 'sign_up', { method: 'email' });
+      setPassword('');
+      onSignedIn();
+    } catch (err: any) {
+      // Imported players without a password get a reset email from the server.
+      setError(apiError(err, mode === 'login' ? 'Could not sign in.' : 'Could not create the account.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const title = mode === 'login' ? 'Sign in' : mode === 'register' ? 'Save your hotel' : 'Reset password';
+  return (
+    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={st.backdrop}>
+        <View style={st.sheet}>
+          <View style={st.head}>
+            <View style={s.between}>
+              <Text style={st.title}>{title}</Text>
+              <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Close">
+                <Text style={{ color: '#fff', fontSize: 18 }}>✕</Text>
+              </Pressable>
+            </View>
+            <Text style={st.sub}>
+              {mode === 'register'
+                ? reason || 'A free account keeps your hotel in the cloud, puts it in the ranking and gives you 10,000 coins.'
+                : mode === 'login'
+                ? "Continue your hotel from the website or another phone. If your account already has a hotel, it replaces this phone's guest hotel."
+                : "We'll email you a link to set a new password."}
+            </Text>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 18 }} keyboardShouldPersistTaps="handled">
+            <Field label="EMAIL" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+            {mode !== 'forgot' && (
+              <Field
+                label="PASSWORD"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoComplete={mode === 'login' ? 'password' : 'new-password'}
+                textContentType={mode === 'login' ? 'password' : 'newPassword'}
+              />
+            )}
+            {mode === 'register' && (
+              <>
+                <Field label="USERNAME (OPTIONAL)" value={username} onChangeText={setUsername} autoCapitalize="none" maxLength={30} placeholder="From your email if empty" />
+                <Field label="INVITE CODE (OPTIONAL)" value={inviteCode} onChangeText={setInviteCode} autoCapitalize="characters" maxLength={32} />
+              </>
+            )}
+            {error ? <Text style={st.error}>{error}</Text> : null}
+            {info ? <Text style={st.info}>{info}</Text> : null}
+            <Button big onPress={submit} busy={busy}>
+              {mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create free account' : 'Send reset link'}
+            </Button>
+            <View style={{ marginTop: 14, gap: 10, alignItems: 'center' }}>
+              {mode !== 'login' && (
+                <Pressable onPress={() => switchTo('login')}>
+                  <Text style={st.link}>I already have an account — sign in</Text>
+                </Pressable>
+              )}
+              {mode !== 'register' && (
+                <Pressable onPress={() => switchTo('register')}>
+                  <Text style={st.link}>New here? Create a free account</Text>
+                </Pressable>
+              )}
+              {mode === 'login' && (
+                <Pressable onPress={() => switchTo('forgot')}>
+                  <Text style={[st.link, { color: C.sub }]}>Forgot password?</Text>
+                </Pressable>
+              )}
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const st = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(2,6,23,0.6)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, overflow: 'hidden', maxHeight: '92%' },
+  head: { backgroundColor: C.dark, paddingHorizontal: 18, paddingTop: 18, paddingBottom: 16 },
+  title: { color: '#fff', fontSize: 22, fontWeight: '900' },
+  sub: { color: '#cbd5e1', fontSize: 13, marginTop: 4 },
+  label: { fontSize: 11, fontWeight: '700', letterSpacing: 1, color: C.sub, marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: C.text },
+  error: { color: '#be123c', backgroundColor: C.redSoft, borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 12 },
+  info: { color: '#065f46', backgroundColor: C.greenSoft, borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 12 },
+  link: { fontSize: 13, fontWeight: '600', color: C.indigo },
+});

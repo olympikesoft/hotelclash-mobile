@@ -5,10 +5,11 @@ import './platform/polyfills';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import * as Updates from 'expo-updates';
 import { GameStore } from './core/gameStore.js';
 import { ENGINE_HASH } from './engine/engine-hash.js';
-import { storage } from './platform/storage';
-import { gameSessionAPI, hasAccountToken, readUser } from './platform/api';
+import { readJson, storage, writeJson } from './platform/storage';
+import { gameSessionAPI, hasAccountToken, onSessionChange, readUser } from './platform/api';
 import type { GameState, ActionResult, Effect } from './types';
 
 // One store for the app, shared by every component using this hook.
@@ -22,6 +23,30 @@ function getStore() {
 const SYNC_INTERVAL_MS = 15000;
 const SYNC_WHEN_PENDING = 200;
 const ENGINE_CHECK_MS = 5 * 60 * 1000;
+const UPDATE_TRIED_KEY = 'plb.engineUpdate';
+const UPDATE_RETRY_MS = 4 * 60 * 1000;
+
+/**
+ * The server runs newer rules than this build: fetch the JS update (EAS Update)
+ * that carries them and restart into it. Like the web's reload, try once per
+ * engine hash every few minutes — the API deploys before the update is published.
+ * Returns false when there's nothing to install (dev build, or not published yet).
+ */
+async function installEngineUpdate(serverHash: string) {
+  if (!Updates.isEnabled) return false;
+  const last = readJson<{ hash?: string; at?: number }>(UPDATE_TRIED_KEY, {});
+  if (last.hash === serverHash && Date.now() - (last.at || 0) < UPDATE_RETRY_MS) return false;
+  writeJson(UPDATE_TRIED_KEY, { hash: serverHash, at: Date.now() });
+  try {
+    const check = await Updates.checkForUpdateAsync();
+    if (!check.isAvailable) return false;
+    await Updates.fetchUpdateAsync();
+    await Updates.reloadAsync();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 let online = true;
 NetInfo.addEventListener((s) => {
@@ -42,6 +67,7 @@ export type SyncInfo = {
 
 export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effect[], after: GameState) => void } = {}) {
   const [state, setState] = useState<GameState | null>(null);
+  const [user, setUser] = useState(() => (hasAccountToken() ? readUser() : null));
   const [sync, setSync] = useState<SyncInfo>({
     mode: null,
     pending: 0,
@@ -70,16 +96,25 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
     refreshSync({ syncing: false, ...(ok ? { lastSyncedAt: Date.now(), error: null } : { error: s.lastSyncError ? 'sync_failed' : null }) });
   }, [refreshSync]);
 
-  // The web reloads itself when the server's rules change; an app build can't,
-  // so it flags the mismatch (the server's state still wins on every sync).
+  // When the server's rules change every sync disagrees and the game keeps
+  // jumping back. Sync what's queued, then install the OTA update with the new
+  // engine; if none is published yet, show "Update app" (the server still wins).
   const checkEngine = useCallback(async () => {
-    if (!online || getStore().mode !== 'account') return;
+    const s = getStore();
+    if (!online || s.mode !== 'account') return;
+    let engineHash: string | undefined;
     try {
-      const { engineHash } = await gameSessionAPI.engineInfo();
-      refreshSync({ outdated: Boolean(engineHash && engineHash !== ENGINE_HASH) });
+      ({ engineHash } = await gameSessionAPI.engineInfo());
     } catch {
-      // offline / API down: keep the last answer
+      return; // offline / API down: keep the last answer
     }
+    const outdated = Boolean(engineHash && engineHash !== ENGINE_HASH);
+    if (outdated && engineHash) {
+      if (s.pendingCount) await s.sync().catch(() => {});
+      s.persist();
+      if (await installEngineUpdate(engineHash)) return;
+    }
+    refreshSync({ outdated });
   }, [refreshSync]);
 
   const lastCorrections = useRef(0);
@@ -95,10 +130,14 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
     const unsubscribe = s.subscribe((next: GameState) => setState(next));
 
     const init = async () => {
-      const user = readUser();
-      const userId = hasAccountToken() && user && user.id ? user.id : null;
+      const account = hasAccountToken() ? readUser() : null;
+      setUser(account);
+      const userId = account && account.id ? account.id : null;
       try {
-        await s.init({ userId, online, hotelName: user?.hotel?.name, hotelType: user?.hotel?.type });
+        // Signing in attaches this phone's hotel to the account (a new guest game
+        // is adopted; otherwise the account's server hotel wins). Signing out
+        // starts a guest hotel; the account's hotel stays on the server.
+        await s.init({ userId, online, hotelName: account?.hotel?.name, hotelType: account?.hotel?.type });
       } catch {
         // Server unreachable or session problem: keep playing locally.
         if (!s.state) await s.init({ userId, online: false });
@@ -109,6 +148,7 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
       checkEngine();
     };
     init();
+    const offSession = onSessionChange(() => init());
 
     let wasOnline = online;
     const offNet = NetInfo.addEventListener((n) => {
@@ -126,6 +166,7 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
     });
     return () => {
       unsubscribe();
+      offSession();
       offNet();
       clearInterval(timer);
       clearInterval(engineTimer);
@@ -162,5 +203,29 @@ export default function useHotelGame({ onEffects }: { onEffects?: (effects: Effe
     [refreshSync]
   );
 
-  return { state, dispatch, sync, newGame };
+  /** Continue from a verified cloud save (replaces the current session). */
+  const restoreSave = useCallback(
+    async (saveId: string) => {
+      await getStore().restoreSave(saveId);
+      refreshSync();
+    },
+    [refreshSync]
+  );
+
+  /** Guests only: load a snapshot saved on this phone. */
+  const loadLocalSnapshot = useCallback(
+    (snapshot: GameState) => {
+      getStore().loadLocalSnapshot(snapshot);
+      refreshSync();
+    },
+    [refreshSync]
+  );
+
+  /** Make sure the server has everything (e.g. before a cloud save). */
+  const flush = useCallback(async () => {
+    await runSync();
+    return getStore().pendingCount === 0;
+  }, [runSync]);
+
+  return { state, dispatch, sync, newGame, restoreSave, loadLocalSnapshot, flush, user };
 }

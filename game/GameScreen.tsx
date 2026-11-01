@@ -2,13 +2,16 @@
 // GameStore, ticks the clock, turns engine effects into pop-ups and toasts.
 // Mirrors the web's pages/game.js.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import useHotelGame from './useHotelGame';
 import useDayHistory from './useDayHistory';
 import { engineData, facilityTypes, insights, roomTypes, staffRoles, trainingPrograms } from './catalog';
 import { readJson, writeJson } from './platform/storage';
+import { signOut } from './platform/api';
+import AccountModal from './ui/AccountModal';
+import SavesModal from './ui/SavesModal';
 import { isRewardedAdReady, preloadRewardedAd, showRewardedAd } from './platform/rewardedAd';
 import { track } from '../services/analytics';
 import { buyRemoveAds, useRemoveAds } from '../services/removeAds';
@@ -69,6 +72,8 @@ export default function GameScreen() {
   const [showNewGame, setShowNewGame] = useState(false);
   const [appActive, setAppActive] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
+  const [account, setAccount] = useState<{ mode: 'login' | 'register'; reason?: string } | null>(null);
+  const [showSaves, setShowSaves] = useState(false);
   const [notes, setNotes] = useState<Note[]>(() => readJson<Note[]>(NOTES_KEY, []));
   const scrollRef = useRef<ScrollView>(null);
   const removeAds = useRemoveAds();
@@ -133,7 +138,7 @@ export default function GameScreen() {
   const effectsRef = useRef(handleEffects);
   effectsRef.current = handleEffects;
 
-  const { state: game, dispatch, sync, newGame } = useHotelGame({ onEffects: (effects, after) => effectsRef.current(effects, after) });
+  const { state: game, dispatch, sync, newGame, restoreSave, loadLocalSnapshot, flush, user } = useHotelGame({ onEffects: (effects, after) => effectsRef.current(effects, after) });
   const history = useDayHistory(game);
   const ready = Boolean(game);
 
@@ -217,7 +222,31 @@ export default function GameScreen() {
   const spinsLeft = engineData.WHEEL_SPINS_PER_DAY - (game.clock?.wheelDate === today ? game.clock.wheelSpins : 0);
   const visitedToday: string[] = game.clock?.visitDate === today ? game.clock.visited || [] : [];
 
+  const signedIn = Boolean(user);
+  const confirmSignOut = () =>
+    Alert.alert('Sign out?', "Your hotel stays in your account. This phone starts a new guest hotel until you sign in again.", [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: () => {
+          flush().finally(() => {
+            signOut();
+            setNotes([]);
+            track('logout');
+          });
+        },
+      },
+    ]);
+
   const menu: MenuItem[] = [
+    ...(signedIn
+      ? [{ icon: '👤', label: `${user?.username || 'Account'} · Sign out`, onPress: confirmSignOut }]
+      : [
+          { icon: '☁️', label: 'Save my hotel (free account)', onPress: () => setAccount({ mode: 'register' }) },
+          { icon: '👤', label: 'Sign in', onPress: () => setAccount({ mode: 'login' }) },
+        ]),
+    { icon: '💾', label: signedIn ? 'Cloud saves' : 'Saves on this phone', onPress: () => setShowSaves(true) },
     { icon: '❓', label: 'How to play', onPress: () => setShowHelp(true) },
     { icon: '🔄', label: 'New hotel…', onPress: () => setShowNewGame(true) },
     ...(!removeAds.owned && removeAds.price ? [{ icon: '🚫', label: `Remove ads · ${removeAds.price}`, onPress: buyRemoveAds }] : []),
@@ -283,7 +312,16 @@ export default function GameScreen() {
             onAcquire={(competitorId) => act('ACQUIRE_HOTEL', { competitorId })}
           />
         )}
-        {tab === 'ranking' && <RankingTab />}
+        {tab === 'ranking' && (
+          <RankingTab
+            signedIn={signedIn}
+            onSignUp={() => setAccount({ mode: 'register', reason: 'Create a free account to put your hotel on the leaderboard, share it and invite friends.' })}
+            onCoinsClaimed={() => {
+              flush();
+              toast('ok', 'Coins claimed — they arrive with your next sync.');
+            }}
+          />
+        )}
         {tab === 'rewards' && (
           <RewardsTab game={g} spinsLeft={spinsLeft} dispatch={dispatch} onWatchAd={() => showRewardedAd('ad_bonus')} adReady={adReady} toast={toast} />
         )}
@@ -332,6 +370,14 @@ export default function GameScreen() {
       <LevelUpModal
         levelUp={levelUp}
         next={insights.levelProgress(g)}
+        onSaveHotel={
+          signedIn
+            ? undefined
+            : () => {
+                setLevelUp(null);
+                setAccount({ mode: 'register', reason: `Your hotel reached level ${levelUp?.level}! Save it with a free account so you never lose it — plus 10,000 coins.` });
+              }
+        }
         onGo={(next) => {
           setLevelUp(null);
           navigate(next);
@@ -344,6 +390,35 @@ export default function GameScreen() {
       />
       <GameOverModal game={g} onNewGame={() => setShowNewGame(true)} />
       <HowToPlay open={showHelp} onClose={() => setShowHelp(false)} />
+      {account && (
+        <AccountModal
+          open
+          initialMode={account.mode}
+          reason={account.reason}
+          hotelName={g.hotelName}
+          onClose={() => setAccount(null)}
+          onSignedIn={() => {
+            setAccount(null);
+            toast('ok', 'Signed in — your hotel now saves to your account.');
+          }}
+        />
+      )}
+      <SavesModal
+        open={showSaves}
+        isGuest={!signedIn}
+        game={g}
+        flush={flush}
+        restoreSave={restoreSave}
+        loadLocalSnapshot={loadLocalSnapshot}
+        toast={toast}
+        onClose={() => setShowSaves(false)}
+        onLoaded={(name) => {
+          setShowSaves(false);
+          setSpeed(0);
+          navigate('dashboard');
+          toast('ok', `Loaded "${name}". Press ▶ to continue.`);
+        }}
+      />
       <NewGameModal
         open={showNewGame}
         defaultName={g.hotelName}
